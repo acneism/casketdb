@@ -133,14 +133,37 @@ func freeAddr(t testing.TB) string {
 	return ""
 }
 
-func eventually(t testing.TB, what string, cond func() bool) {
+func eventually(t testing.TB, what string, cond func() bool, explain ...func() string) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for !cond() {
 		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for %s", what)
+			var details strings.Builder
+			for _, fn := range explain {
+				details.WriteString(fn())
+			}
+			t.Fatalf("timed out waiting for %s%s", what, details.String())
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func clusterState(nodes []*testNode) func() string {
+	return func() string {
+		var b strings.Builder
+		for _, tn := range nodes {
+			if tn.node == nil {
+				fmt.Fprintf(&b, "\n%s: stopped", tn.id)
+				continue
+			}
+			var snaps []string
+			des, _ := os.ReadDir(filepath.Join(tn.dir, "raft", "snap"))
+			for _, de := range des {
+				snaps = append(snaps, de.Name())
+			}
+			fmt.Fprintf(&b, "\n%s: %+v durable=%d snap=%v", tn.id, tn.node.Status(), tn.db.DurableIndex(), snaps)
+		}
+		return b.String()
 	}
 }
 
@@ -668,8 +691,8 @@ func TestSystemStateReplicates(t *testing.T) {
 	eventually(t, "the lagging follower to install a snapshot", func() bool {
 		_, _, ok := latestSnapshot(f)
 		return ok
-	})
-	eventually(t, "the lagging follower to store v2", func() bool { return string(f.db.System()) == "v2" })
+	}, clusterState(nodes))
+	eventually(t, "the lagging follower to store v2", func() bool { return string(f.db.System()) == "v2" }, clusterState(nodes))
 }
 
 func TestLaggingFollowerCatchesUpBySnapshot(t *testing.T) {
@@ -682,9 +705,9 @@ func TestLaggingFollowerCatchesUpBySnapshot(t *testing.T) {
 	}
 	compact(t, nodes, l, "fill")
 	f.start(t)
-	eventually(t, "lagging follower to catch up", converged(nodes, "fill19", "v", 80))
+	eventually(t, "lagging follower to catch up", converged(nodes, "fill19", "v", 80), clusterState(nodes))
 	eventually(t, "the lagging follower to install a snapshot", func() bool {
 		_, _, ok := latestSnapshot(f)
 		return ok
-	})
+	}, clusterState(nodes))
 }
