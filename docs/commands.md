@@ -14,7 +14,7 @@ CasketDB implements the string subset of Redis 7 over RESP2. Semantics, replies 
 | Bitmaps | SETBIT, GETBIT, BITCOUNT, BITPOS, BITOP, BITFIELD, BITFIELD_RO | Bitmaps are strings. BITCOUNT and BITPOS accept BYTE and BIT ranges; BITOP supports AND, OR, XOR and NOT; BITFIELD supports GET, SET, INCRBY and OVERFLOW WRAP, SAT or FAIL. A bit offset is below 2³² |
 | HyperLogLog | PFADD, PFCOUNT, PFMERGE | See [HyperLogLog](#hyperloglog) |
 | Geo | GEOADD, GEODIST, GEOHASH, GEOPOS, GEOSEARCH, GEOSEARCHSTORE, GEORADIUS, GEORADIUS_RO, GEORADIUSBYMEMBER, GEORADIUSBYMEMBER_RO | See [geo](#geo) |
-| Streams | XADD, XRANGE, XREVRANGE, XLEN, XDEL, XTRIM, XREAD, XSETID, XINFO STREAM | See [streams](#streams) |
+| Streams | XADD, XRANGE, XREVRANGE, XLEN, XDEL, XTRIM, XREAD, XSETID, XGROUP, XREADGROUP, XACK, XPENDING, XCLAIM, XAUTOCLAIM, XINFO | See [streams](#streams) |
 | Keys | DEL, UNLINK, EXISTS, TYPE, OBJECT, KEYS, SCAN, DBSIZE | Glob patterns `*`, `?`, `[a-z]`, `[^x]`, `\`. SCAN accepts MATCH, COUNT, TYPE. OBJECT supports ENCODING only: `int`, `embstr` or `raw` for a string, as in Redis |
 | Expiry | EXPIRE, PEXPIRE, EXPIREAT, PEXPIREAT, TTL, PTTL, PERSIST | NX, XX, GT, LT. A time in the past deletes the key. TTL returns −2 for a missing key and −1 for a key without expiry |
 | Transactions | MULTI, EXEC, DISCARD, WATCH, UNWATCH | See [transactions](#transactions) |
@@ -27,7 +27,7 @@ CasketDB implements the string subset of Redis 7 over RESP2. Semantics, replies 
 
 ### Data types
 
-Strings, including the bitmap and HyperLogLog commands, hashes, sets, lists, sorted sets, including the geo commands, and streams without consumer groups. Consumer groups, pub/sub, Lua and Functions are not implemented.
+Strings, including the bitmap and HyperLogLog commands, hashes, sets, lists, sorted sets, including the geo commands, and streams. Pub/sub, Lua and Functions are not implemented.
 
 ### Hashes
 
@@ -85,9 +85,10 @@ Differences from Redis:
 - An entry costs memory like a member of a large collection, about the size of a key; Redis packs entries into nodes of up to 100 and costs a few bytes per entry.
 - `~` with MAXLEN or MINID trims exactly, within LIMIT (10,000 by default), where Redis trims whole nodes and may keep more entries.
 - XINFO STREAM reports `radix-tree-keys` and `radix-tree-nodes` as 0: there is no radix tree.
-- Consumer groups (XGROUP, XREADGROUP, XACK, XPENDING, XCLAIM, XAUTOCLAIM) are not supported yet.
 
-XREAD with BLOCK waits like the [blocking commands](#blocking-commands). It is a read, so in a cluster it also waits on followers, and it wakes when the entry it waits for is applied there.
+A consumer group lives in the record of its stream: its last delivered ID, its read counter and its counts. Each consumer, each pending entry, and each pending entry again under its consumer, is a record of its own next to the entries, so XACK, XCLAIM and a delivery write only the entries they touch, and XPENDING and XAUTOCLAIM find a range of pending entries in O(log n). Deleting the stream key drops its groups with it.
+
+XREAD with BLOCK waits like the [blocking commands](#blocking-commands). It is a read, so in a cluster it also waits on followers, and it wakes when the entry it waits for is applied there. XREADGROUP with BLOCK changes the group, so it waits on the leader only.
 
 ### Blocking commands
 

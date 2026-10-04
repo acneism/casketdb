@@ -100,17 +100,17 @@ func parseIntervalID(arg []byte, missingSeq uint64) (streamID, bool, bool) {
 	return id, false, ok
 }
 
-func entryMember(id streamID) string {
-	b := make([]byte, 17)
-	b[0] = 'e'
-	binary.BigEndian.PutUint64(b[1:], id.ms)
-	binary.BigEndian.PutUint64(b[9:], id.seq)
-	return string(b)
+func idBytes(id streamID) string {
+	return string(binary.BigEndian.AppendUint64(binary.BigEndian.AppendUint64(nil, id.ms), id.seq))
 }
 
-func entryID(member string) streamID {
-	b := []byte(member)
-	return streamID{binary.BigEndian.Uint64(b[1:]), binary.BigEndian.Uint64(b[9:])}
+func entryMember(id streamID) string {
+	return "e" + idBytes(id)
+}
+
+func memberID(member string) streamID {
+	b := []byte(member[len(member)-16:])
+	return streamID{binary.BigEndian.Uint64(b), binary.BigEndian.Uint64(b[8:])}
 }
 
 func encodeFields(fields [][]byte) []byte {
@@ -149,7 +149,8 @@ type stream struct {
 	last       streamID
 	maxDeleted streamID
 	added      uint64
-	groups     []byte
+	groups     []*streamGroup
+	first      *streamID
 }
 
 func openStream(tx *bitcask.Tx, key []byte) (*stream, reply, error) {
@@ -157,7 +158,7 @@ func openStream(tx *bitcask.Tx, key []byte) (*stream, reply, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	s := &stream{tx: tx, key: string(key), groups: []byte{0}}
+	s := &stream{tx: tx, key: string(key)}
 	if !found {
 		return s, nil, nil
 	}
@@ -177,8 +178,17 @@ func openStream(tx *bitcask.Tx, key []byte) (*stream, reply, error) {
 	s.last = streamID{read(), read()}
 	s.maxDeleted = streamID{read(), read()}
 	s.added = read()
-	if len(rest) > 0 {
-		s.groups = rest
+	for n := read(); n > 0; n-- {
+		size := read()
+		if size > uint64(len(rest)) {
+			break
+		}
+		g := &streamGroup{name: string(rest[:size])}
+		rest = rest[size:]
+		g.last = streamID{read(), read()}
+		g.entriesRead = int64(read()) - 1
+		g.pending, g.consumers = read(), read()
+		s.groups = append(s.groups, g)
 	}
 	return s, nil, nil
 }
@@ -188,39 +198,54 @@ func (s *stream) store() {
 		s.exists, s.gen = true, newGen()
 	}
 	v := binary.LittleEndian.AppendUint64(nil, s.gen)
-	for _, n := range []uint64{s.length, s.last.ms, s.last.seq, s.maxDeleted.ms, s.maxDeleted.seq, s.added} {
+	for _, n := range []uint64{s.length, s.last.ms, s.last.seq, s.maxDeleted.ms, s.maxDeleted.seq, s.added, uint64(len(s.groups))} {
 		v = binary.AppendUvarint(v, n)
 	}
-	v = append(v, s.groups...)
+	for _, g := range s.groups {
+		v = binary.AppendUvarint(v, uint64(len(g.name)))
+		v = append(v, g.name...)
+		for _, n := range []uint64{g.last.ms, g.last.seq, uint64(g.entriesRead + 1), g.pending, g.consumers} {
+			v = binary.AppendUvarint(v, n)
+		}
+	}
 	expireAt, _ := s.tx.ExpireAt(s.key)
 	s.tx.PutKind(s.key, streamKind, v, expireAt)
 }
 
-func (s *stream) ids(from, to streamID, count int64, reverse bool) ([]streamID, error) {
+func (s *stream) scan(from string, fn func(member string) bool) error {
+	start, err := s.tx.MemberCount(s.key, func(_ []byte, m string) bool { return m < from })
+	if err != nil {
+		return err
+	}
+	return s.tx.MemberRange(s.key, start, false, func(m string, _ []byte) bool { return fn(m) })
+}
+
+func (s *stream) idRange(prefix string, from, to streamID, count int64, reverse bool) ([]streamID, error) {
 	if !s.exists || to.less(from) {
 		return nil, nil
 	}
-	lo, hi := entryMember(from), entryMember(to)
-	below := func(_ []byte, m string) bool { return m < lo }
-	if reverse {
-		below = func(_ []byte, m string) bool { return m <= hi }
-	}
-	start, err := s.tx.MemberCount(s.key, below)
-	if err != nil {
-		return nil, err
-	}
-	if reverse {
-		start--
-	}
+	lo, hi := prefix+idBytes(from), prefix+idBytes(to)
 	var out []streamID
-	err = s.tx.MemberRange(s.key, start, reverse, func(m string, _ []byte) bool {
+	collect := func(m string) bool {
 		if m < lo || m > hi {
 			return false
 		}
-		out = append(out, entryID(m))
+		out = append(out, memberID(m))
 		return count <= 0 || int64(len(out)) < count
-	})
+	}
+	if !reverse {
+		return out, s.scan(lo, collect)
+	}
+	start, err := s.tx.MemberCount(s.key, func(_ []byte, m string) bool { return m <= hi })
+	if err != nil {
+		return nil, err
+	}
+	err = s.tx.MemberRange(s.key, start-1, true, func(m string, _ []byte) bool { return collect(m) })
 	return out, err
+}
+
+func (s *stream) ids(from, to streamID, count int64, reverse bool) ([]streamID, error) {
+	return s.idRange("e", from, to, count, reverse)
 }
 
 func (s *stream) entry(id streamID) (reply, error) {
@@ -280,7 +305,19 @@ func (s *stream) trim(t trimSpec) (int64, error) {
 		s.tx.DeleteMember(s.key, entryMember(id))
 	}
 	s.length -= uint64(len(ids))
+	s.first = nil
 	return int64(len(ids)), err
+}
+
+func (s *stream) firstID() (streamID, error) {
+	if s.first == nil {
+		id, _, err := s.edge(false)
+		if err != nil {
+			return streamID{}, err
+		}
+		s.first = &id
+	}
+	return *s.first, nil
 }
 
 type addArgs struct {
@@ -444,23 +481,9 @@ func xrange(reverse bool) txFunc {
 		if reverse {
 			startArg, endArg = args[3], args[2]
 		}
-		start, exclusive, ok := parseIntervalID(startArg, 0)
-		if !ok {
-			return errorReply(errStreamID), nil
-		}
-		if exclusive {
-			if start, ok = start.next(); !ok {
-				return errorReply("ERR invalid start ID for the interval"), nil
-			}
-		}
-		end, exclusive, ok := parseIntervalID(endArg, math.MaxUint64)
-		if !ok {
-			return errorReply(errStreamID), nil
-		}
-		if exclusive {
-			if end, ok = end.prev(); !ok {
-				return errorReply("ERR invalid end ID for the interval"), nil
-			}
+		start, end, bad := parseRangeIDs(startArg, endArg)
+		if bad != nil {
+			return bad, nil
 		}
 		count := int64(-1)
 		for j := 4; j < len(args); j += 2 {
@@ -507,6 +530,7 @@ func cmdXDel(tx *bitcask.Tx, args [][]byte) (reply, error) {
 		if tx.DeleteMember(s.key, entryMember(id)) {
 			deleted++
 			s.length--
+			s.first = nil
 			if s.maxDeleted.less(id) {
 				s.maxDeleted = id
 			}
@@ -597,9 +621,22 @@ func cmdXSetID(tx *bitcask.Tx, args [][]byte) (reply, error) {
 	return statusReply("OK"), nil
 }
 
-func cmdXRead(tx *bitcask.Tx, args [][]byte) (reply, error) {
-	count, timeout, streamsAt := int64(0), time.Duration(-1), 0
-	for i := 1; i < len(args) && streamsAt == 0; i++ {
+type readArgs struct {
+	count           int64
+	timeout         time.Duration
+	group, consumer []byte
+	noack           bool
+	at              int
+	keys, ids       [][]byte
+}
+
+func parseRead(args [][]byte, grouped bool) (readArgs, reply) {
+	r := readArgs{timeout: -1}
+	name, symbol := "xread", "$"
+	if grouped {
+		name, symbol = "xreadgroup", ">"
+	}
+	for i := 1; i < len(args) && r.at == 0; i++ {
 		more := len(args) - i - 1
 		switch opt := upper(args[i]); {
 		case opt == "BLOCK" && more > 0:
@@ -607,57 +644,75 @@ func cmdXRead(tx *bitcask.Tx, args [][]byte) (reply, error) {
 			ms, ok := parseInt(args[i])
 			switch {
 			case !ok:
-				return errorReply("ERR timeout is not an integer or out of range"), nil
+				return r, errorReply("ERR timeout is not an integer or out of range")
 			case ms < 0:
-				return errorReply("ERR timeout is negative"), nil
+				return r, errorReply("ERR timeout is negative")
 			}
-			timeout = time.Duration(min(ms, math.MaxInt64/int64(time.Millisecond))) * time.Millisecond
+			r.timeout = time.Duration(min(ms, math.MaxInt64/int64(time.Millisecond))) * time.Millisecond
 		case opt == "COUNT" && more > 0:
 			i++
 			n, ok := parseInt(args[i])
 			if !ok {
-				return errorReply(errNotInteger), nil
+				return r, errorReply(errNotInteger)
 			}
-			count = max(n, 0)
+			r.count = max(n, 0)
 		case opt == "STREAMS" && more > 0:
 			if more%2 != 0 {
-				return errorReply("ERR Unbalanced 'xread' list of streams: for each stream key an ID or '$' must be specified."), nil
+				return r, errorReply("ERR Unbalanced '" + name + "' list of streams: for each stream key an ID or '" + symbol + "' must be specified.")
 			}
-			streamsAt = i + 1
+			r.at = i + 1
 		case opt == "GROUP" && more >= 2:
-			return errorReply("ERR The GROUP option is only supported by XREADGROUP. You called XREAD instead."), nil
+			if !grouped {
+				return r, errorReply("ERR The GROUP option is only supported by XREADGROUP. You called XREAD instead.")
+			}
+			r.group, r.consumer = args[i+1], args[i+2]
+			i += 2
 		case opt == "NOACK":
-			return errorReply("ERR The NOACK option is only supported by XREADGROUP. You called XREAD instead."), nil
+			if !grouped {
+				return r, errorReply("ERR The NOACK option is only supported by XREADGROUP. You called XREAD instead.")
+			}
+			r.noack = true
 		default:
-			return errorReply(errSyntax), nil
+			return r, errorReply(errSyntax)
 		}
 	}
-	if streamsAt == 0 {
-		return errorReply(errSyntax), nil
+	switch {
+	case r.at == 0:
+		return r, errorReply(errSyntax)
+	case grouped && r.group == nil:
+		return r, errorReply("ERR Missing GROUP option for XREADGROUP")
 	}
-	n := (len(args) - streamsAt) / 2
-	keys, idArgs := args[streamsAt:streamsAt+n], args[streamsAt+n:]
-	streams := make([]*stream, n)
-	after := make([]streamID, n)
+	n := (len(args) - r.at) / 2
+	r.keys, r.ids = args[r.at:r.at+n], args[r.at+n:]
+	return r, nil
+}
+
+func cmdXRead(tx *bitcask.Tx, args [][]byte) (reply, error) {
+	r, bad := parseRead(args, false)
+	if bad != nil {
+		return bad, nil
+	}
+	streams := make([]*stream, len(r.keys))
+	after := make([]streamID, len(r.keys))
 	var retry [][]byte
-	for i, key := range keys {
+	for i, key := range r.keys {
 		s, bad, err := openStream(tx, key)
 		if bad != nil || err != nil {
 			return bad, err
 		}
 		streams[i] = s
-		switch string(idArgs[i]) {
+		switch string(r.ids[i]) {
 		case "$":
 			after[i] = s.last
 			if retry == nil {
 				retry = append([][]byte(nil), args...)
 			}
-			retry[streamsAt+n+i] = []byte(s.last.String())
+			retry[r.at+len(r.keys)+i] = []byte(s.last.String())
 		case ">":
 			return errorReply("ERR The > ID can be specified only when calling XREADGROUP using the GROUP <group> <consumer> option."), nil
 		default:
 			var ok bool
-			if after[i], _, ok = parseStreamID(idArgs[i], 0, true, false); !ok {
+			if after[i], _, ok = parseStreamID(r.ids[i], 0, true, false); !ok {
 				return errorReply(errStreamID), nil
 			}
 		}
@@ -668,7 +723,7 @@ func cmdXRead(tx *bitcask.Tx, args [][]byte) (reply, error) {
 		if !ok || s.length == 0 {
 			continue
 		}
-		ids, err := s.ids(from, maxStreamID, count, false)
+		ids, err := s.ids(from, maxStreamID, r.count, false)
 		if err != nil {
 			return nil, err
 		}
@@ -679,13 +734,13 @@ func cmdXRead(tx *bitcask.Tx, args [][]byte) (reply, error) {
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, arrayReply{bulkReply(keys[i]), entries})
+		out = append(out, arrayReply{bulkReply(r.keys[i]), entries})
 	}
 	switch {
 	case len(out) > 0:
 		return out, nil
-	case timeout >= 0:
-		return blockReply{timeout: timeout, keys: keys, empty: nullArrayReply{}, retry: retry}, nil
+	case r.timeout >= 0:
+		return blockReply{timeout: r.timeout, keys: r.keys, empty: nullArrayReply{}, retry: retry}, nil
 	}
 	return nullArrayReply{}, nil
 }
@@ -695,6 +750,10 @@ func cmdXInfo(tx *bitcask.Tx, args [][]byte) (reply, error) {
 	case sub == "HELP" && len(args) == 2:
 		return stringsReply{
 			"XINFO <subcommand> [<arg> [value] [opt] ...]. Subcommands are:",
+			"CONSUMERS <key> <groupname>",
+			"    Show consumers of <groupname>.",
+			"GROUPS <key>",
+			"    Show the stream consumer groups.",
 			"STREAM <key> [FULL [COUNT <count>]",
 			"    Show information about the stream.",
 			"HELP",
@@ -702,6 +761,10 @@ func cmdXInfo(tx *bitcask.Tx, args [][]byte) (reply, error) {
 		}, nil
 	case sub == "STREAM" && len(args) >= 3:
 		return xinfoStream(tx, args)
+	case sub == "GROUPS" && len(args) == 3:
+		return xinfoGroups(tx, args[2])
+	case sub == "CONSUMERS" && len(args) == 4:
+		return xinfoConsumers(tx, args[2], args[3])
 	}
 	return unknownSubcommand(args), nil
 }
@@ -755,7 +818,11 @@ func xinfoStream(tx *bitcask.Tx, args [][]byte) (reply, error) {
 		if err != nil {
 			return nil, err
 		}
-		return append(out, bulkReply("entries"), entries, bulkReply("groups"), arrayReply{}), nil
+		groups, err := s.groupsFull(count)
+		if err != nil {
+			return nil, err
+		}
+		return append(out, bulkReply("entries"), entries, bulkReply("groups"), groups), nil
 	}
 	firstEntry, err := s.edgeEntry(false)
 	if err != nil {
@@ -765,7 +832,7 @@ func xinfoStream(tx *bitcask.Tx, args [][]byte) (reply, error) {
 	if err != nil {
 		return nil, err
 	}
-	return append(out, bulkReply("groups"), intReply(0), bulkReply("first-entry"), firstEntry, bulkReply("last-entry"), lastEntry), nil
+	return append(out, bulkReply("groups"), intReply(int64(len(s.groups))), bulkReply("first-entry"), firstEntry, bulkReply("last-entry"), lastEntry), nil
 }
 
 func (s *stream) edgeEntry(last bool) (reply, error) {
