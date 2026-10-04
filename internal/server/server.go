@@ -82,6 +82,7 @@ type client struct {
 	watched map[string]bitcask.Version
 	subs    [3]map[string]bool
 	out     *outQueue
+	proto   atomic.Int32
 }
 
 func New(db *bitcask.DB, cfg Config) *Server {
@@ -359,7 +360,7 @@ func (s *Server) execute(c *client, args [][]byte) {
 			return
 		}
 	}
-	if c.subscribed() {
+	if c.subscribed() && c.w.Proto == 2 {
 		switch {
 		case !subscribedCommands[cmd.name]:
 			c.reject(errorReply("ERR Can't execute '" + cmd.name + "': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context"))

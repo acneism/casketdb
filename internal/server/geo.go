@@ -476,7 +476,7 @@ func cmdGeoPos(tx *bitcask.Tx, args [][]byte) (reply, error) {
 		}
 		out[i] = nullArrayReply{}
 		if ok {
-			out[i] = arrayReply{bulkReply(formatCoord(lon)), bulkReply(formatCoord(lat))}
+			out[i] = arrayReply{doubleReply(formatCoord(lon)), doubleReply(formatCoord(lat))}
 		}
 	}
 	return out, nil
@@ -644,7 +644,7 @@ func geoSearchCommand(flags int) txFunc {
 				item = append(item, intReply(int64(p.score)))
 			}
 			if withCoord {
-				item = append(item, arrayReply{bulkReply(formatCoord(p.lon)), bulkReply(formatCoord(p.lat))})
+				item = append(item, arrayReply{doubleReply(formatCoord(p.lon)), doubleReply(formatCoord(p.lat))})
 			}
 			out[i] = item
 		}

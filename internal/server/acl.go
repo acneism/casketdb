@@ -625,7 +625,7 @@ func cmdACL(s *Server, c *client, args [][]byte) reply {
 		for _, h := range p.passwords {
 			passwords = append(passwords, hex.EncodeToString(h[:]))
 		}
-		return arrayReply{
+		return mapReply{
 			bulkReply("flags"), flags,
 			bulkReply("passwords"), passwords,
 			bulkReply("commands"), bulkReply(strings.Join(p.commandRules(), " ")),

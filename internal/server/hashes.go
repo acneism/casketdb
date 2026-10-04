@@ -173,6 +173,9 @@ func hashItems(tx *bitcask.Tx, key []byte, fields, values bool) (reply, error) {
 			out = append(out, bulkReply(value))
 		}
 	})
+	if fields && values {
+		return mapReply(out), err
+	}
 	return out, err
 }
 
@@ -352,6 +355,9 @@ func randomMembers(tx *bitcask.Tx, args [][]byte, option string, open func(*bitc
 		if len(args) == 4 {
 			out = append(out, format(values[i]))
 		}
+	}
+	if len(args) == 4 {
+		return pairsReply(out), nil
 	}
 	return out, nil
 }

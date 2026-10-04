@@ -1,6 +1,6 @@
 # Commands and differences from Redis
 
-CasketDB implements the string subset of Redis 7 over RESP2. Semantics, replies and error texts follow Redis. An unknown command returns `-ERR unknown command`, a wrong argument count returns `-ERR wrong number of arguments`, and the connection stays open in both cases.
+CasketDB implements the commands of Redis 7 listed below over RESP2 and RESP3. Semantics, replies and error texts follow Redis. An unknown command returns `-ERR unknown command`, a wrong argument count returns `-ERR wrong number of arguments`, and the connection stays open in both cases.
 
 ## Supported commands
 
@@ -93,7 +93,7 @@ XREAD with BLOCK waits like the [blocking commands](#blocking-commands). It is a
 
 ### Pub/Sub
 
-A client that subscribes to a channel, a pattern or a shard channel may only send SUBSCRIBE, UNSUBSCRIBE and their P and S forms, PING, which answers `["pong", message]`, and QUIT, as in Redis over RESP2. Messages arrive as `message`, `pmessage` and `smessage`; a client subscribed to a channel and to a pattern that matches it receives both, and PUBLISH counts both. Shard channels are a namespace of their own: SPUBLISH reaches only SSUBSCRIBE.
+Over RESP2, a client that subscribes to a channel, a pattern or a shard channel may only send SUBSCRIBE, UNSUBSCRIBE and their P and S forms, PING, which answers `["pong", message]`, and QUIT, as in Redis; over RESP3 it may send any command and receives messages as pushes. Messages arrive as `message`, `pmessage` and `smessage`; a client subscribed to a channel and to a pattern that matches it receives both, and PUBLISH counts both. Shard channels are a namespace of their own: SPUBLISH reaches only SSUBSCRIBE.
 
 Differences from Redis:
 
@@ -136,7 +136,7 @@ Outside MULTI, KEYS, SCAN and DBSIZE lock one shard at a time. The result is not
 
 ### Connection
 
-- Only RESP2. `HELLO 3` returns `-NOPROTO`; `HELLO 2` accepts `AUTH` and `SETNAME`.
+- `HELLO 3` switches a connection to RESP3 and `HELLO 2` back; both accept `AUTH` and `SETNAME`, and other versions return `-NOPROTO`. Over RESP3, replies take the types Redis gives them: maps for HGETALL, CONFIG GET, XREAD, XREADGROUP, XINFO, ACL GETUSER and `LCS … IDX`, sets for SMEMBERS, SINTER, SUNION, SDIFF and `SPOP … count`, doubles for scores and coordinates, pairs for WITHSCORES and WITHVALUES, a verbatim string for INFO, `_` for null, and pushes for pub/sub messages, where a subscribed client may also run any other command. Client-side caching (`CLIENT TRACKING`) is not supported.
 - `AUTH <password>` signs in as `default`, `AUTH <user> <password>` as any user. Until a client authenticates, every command except AUTH, HELLO and QUIT returns `NOAUTH`. When `default` has no password, a new connection is signed in as `default` right away; in [protected mode](configuration.md#protected-mode), on by default, a client from another host gets `DENIED` instead and is disconnected.
 - After 10 failed `AUTH` attempts from one address within a second, `AUTH` and `HELLO … AUTH` from that address answer `ERR too many failed AUTH attempts` until the second is over, even with the right password. Redis has no such limit; see [client limits](configuration.md#client-limits).
 - Only database 0. `SELECT 0` succeeds; any other index returns an error.

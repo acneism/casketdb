@@ -116,7 +116,7 @@ func cmdSMembers(tx *bitcask.Tx, args [][]byte) (reply, error) {
 		return bad, err
 	}
 	members, err := s.members()
-	return membersReply(members), err
+	return setReply(membersReply(members)), err
 }
 
 func cmdSCard(tx *bitcask.Tx, args [][]byte) (reply, error) {
@@ -153,7 +153,7 @@ func cmdSPop(tx *bitcask.Tx, args [][]byte) (reply, error) {
 	}
 	s.store()
 	if len(args) == 3 {
-		return membersReply(popped), nil
+		return setReply(membersReply(popped)), nil
 	}
 	if len(popped) == 0 {
 		return nilReply, nil
@@ -337,7 +337,7 @@ func setCommand(op func([]*collection) ([][]byte, error), store bool) txFunc {
 		if store {
 			return storeSet(tx, args[1], members)
 		}
-		return membersReply(members), nil
+		return setReply(membersReply(members)), nil
 	}
 }
 

@@ -504,7 +504,7 @@ func cmdXReadGroup(tx *bitcask.Tx, args [][]byte) (reply, error) {
 			targets[i].history, targets[i].after = true, id
 		}
 	}
-	var out arrayReply
+	var out keyedReply
 	for i, t := range targets {
 		c, err := t.gs.consumer(string(r.consumer), true)
 		if err != nil {
@@ -521,7 +521,7 @@ func cmdXReadGroup(tx *bitcask.Tx, args [][]byte) (reply, error) {
 			return nil, err
 		}
 		if t.history || len(entries) > 0 {
-			out = append(out, arrayReply{bulkReply(r.keys[i]), entries})
+			out = append(out, bulkReply(r.keys[i]), entries)
 		}
 	}
 	for _, gs := range sessions {
@@ -940,7 +940,7 @@ func xinfoGroups(tx *bitcask.Tx, key []byte) (reply, error) {
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, arrayReply{
+		out = append(out, mapReply{
 			bulkReply("name"), bulkReply(g.name),
 			bulkReply("consumers"), intReply(int64(g.consumers)),
 			bulkReply("pending"), intReply(int64(g.pending)),
@@ -979,7 +979,7 @@ func xinfoConsumers(tx *bitcask.Tx, key, group []byte) (reply, error) {
 		if c.active != -1 {
 			inactive = gs.now - c.active
 		}
-		out = append(out, arrayReply{
+		out = append(out, mapReply{
 			bulkReply("name"), bulkReply(c.name),
 			bulkReply("pending"), intReply(int64(c.pending)),
 			bulkReply("idle"), intReply(max(gs.now-c.seen, 0)),
@@ -1027,7 +1027,7 @@ func (s *stream) groupsFull(count int64) (arrayReply, error) {
 				}
 				owned = append(owned, arrayReply{id.reply(), intReply(n.time), intReply(int64(n.count))})
 			}
-			cs = append(cs, arrayReply{
+			cs = append(cs, mapReply{
 				bulkReply("name"), bulkReply(c.name),
 				bulkReply("seen-time"), intReply(c.seen),
 				bulkReply("active-time"), intReply(c.active),
@@ -1035,7 +1035,7 @@ func (s *stream) groupsFull(count int64) (arrayReply, error) {
 				bulkReply("pending"), owned,
 			})
 		}
-		out = append(out, arrayReply{
+		out = append(out, mapReply{
 			bulkReply("name"), bulkReply(g.name),
 			bulkReply("last-delivered-id"), g.last.reply(),
 			bulkReply("entries-read"), entriesRead(g),

@@ -255,14 +255,16 @@ func cmdAuth(s *Server, c *client, args [][]byte) reply {
 }
 
 func cmdHello(s *Server, c *client, args [][]byte) reply {
+	proto := c.w.Proto
 	if len(args) >= 2 {
 		v, ok := parseInt(args[1])
 		if !ok {
 			return errorReply("ERR Protocol version is not an integer or out of range")
 		}
-		if v != 2 {
+		if v != 2 && v != 3 {
 			return errorReply("NOPROTO unsupported protocol version")
 		}
+		proto = int(v)
 	}
 	name, u := c.name, c.user
 	for i := 2; i < len(args); i++ {
@@ -293,10 +295,12 @@ func cmdHello(s *Server, c *client, args [][]byte) reply {
 		return errorReply("NOAUTH HELLO must be called with the client already authenticated, otherwise the HELLO <proto> AUTH <user> <pass> option can be used to authenticate the client and select the RESP protocol version at the same time")
 	}
 	c.name, c.user = name, u
-	return arrayReply{
+	c.w.Proto = proto
+	c.proto.Store(int32(proto))
+	return mapReply{
 		bulkReply("server"), bulkReply("redis"),
 		bulkReply("version"), bulkReply(redisVersion),
-		bulkReply("proto"), intReply(2),
+		bulkReply("proto"), intReply(proto),
 		bulkReply("id"), intReply(c.id),
 		bulkReply("mode"), bulkReply("standalone"),
 		bulkReply("role"), bulkReply("master"),
@@ -363,11 +367,11 @@ func cmdConfig(s *Server, c *client, args [][]byte) reply {
 			"proto-max-bulk-len": strconv.FormatInt(s.maxBulk.Load(), 10),
 			"requirepass":        s.password(),
 		}
-		var out stringsReply
+		out := mapReply{}
 		for _, name := range slices.Sorted(maps.Keys(params)) {
 			for _, p := range args[2:] {
 				if matchGlob(strings.ToLower(string(p)), name) {
-					out = append(out, name, params[name])
+					out = append(out, bulkReply(name), bulkReply(params[name]))
 					break
 				}
 			}
@@ -493,7 +497,7 @@ func cmdInfo(s *Server, c *client, args [][]byte) reply {
 	if st.Keys > 0 {
 		line("db0:keys=%d,expires=%d,avg_ttl=0", st.Keys, st.KeysWithTTL)
 	}
-	return bulkReply(b.String())
+	return verbatimReply(b.String())
 }
 
 func cmdFlush(s *Server, c *client, args [][]byte) reply {

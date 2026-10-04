@@ -58,6 +58,70 @@ func (r stringsReply) writeTo(w *resp.Writer) {
 	}
 }
 
+type mapReply []reply
+
+type setReply []reply
+
+type pushReply []reply
+
+type pairsReply []reply
+
+type keyedReply []reply
+
+type doubleReply string
+
+type verbatimReply string
+
+func (r mapReply) writeTo(w *resp.Writer) {
+	w.Map(len(r) / 2)
+	for _, e := range r {
+		e.writeTo(w)
+	}
+}
+
+func (r setReply) writeTo(w *resp.Writer) {
+	w.Set(len(r))
+	for _, e := range r {
+		e.writeTo(w)
+	}
+}
+
+func (r pushReply) writeTo(w *resp.Writer) {
+	w.Push(len(r))
+	for _, e := range r {
+		e.writeTo(w)
+	}
+}
+
+func (r pairsReply) writeTo(w *resp.Writer) {
+	if w.Proto != 3 {
+		arrayReply(r).writeTo(w)
+		return
+	}
+	writePairs(w, r)
+}
+
+func (r keyedReply) writeTo(w *resp.Writer) {
+	if w.Proto == 3 {
+		mapReply(r).writeTo(w)
+		return
+	}
+	writePairs(w, r)
+}
+
+func writePairs(w *resp.Writer, r []reply) {
+	w.Array(len(r) / 2)
+	for i := 0; i+1 < len(r); i += 2 {
+		w.Array(2)
+		r[i].writeTo(w)
+		r[i+1].writeTo(w)
+	}
+}
+
+func (r doubleReply) writeTo(w *resp.Writer) { w.Double(string(r)) }
+
+func (r verbatimReply) writeTo(w *resp.Writer) { w.Verbatim(string(r)) }
+
 func storageError(err error) errorReply {
 	switch {
 	case errors.Is(err, replica.ErrNotLeader):

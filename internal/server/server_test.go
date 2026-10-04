@@ -52,6 +52,16 @@ type status string
 
 type errReply string
 
+type respMap []any
+
+type respSet []any
+
+type respPush []any
+
+type respDouble string
+
+type respVerbatim string
+
 type testConn struct {
 	t    *testing.T
 	conn net.Conn
@@ -154,19 +164,44 @@ func (c *testConn) read() any {
 			c.t.Fatal(err)
 		}
 		return string(buf[:n])
-	case '*':
+	case '*', '%', '~', '>':
 		n, err := strconv.Atoi(body)
 		if err != nil {
-			c.t.Fatalf("bad array reply %q", line)
+			c.t.Fatalf("bad aggregate reply %q", line)
 		}
 		if n < 0 {
 			return nil
+		}
+		if line[0] == '%' {
+			n *= 2
 		}
 		out := make([]any, n)
 		for i := range out {
 			out[i] = c.read()
 		}
+		switch line[0] {
+		case '%':
+			return respMap(out)
+		case '~':
+			return respSet(out)
+		case '>':
+			return respPush(out)
+		}
 		return out
+	case '_':
+		return nil
+	case ',':
+		return respDouble(body)
+	case '=':
+		n, err := strconv.Atoi(body)
+		if err != nil || n < 4 {
+			c.t.Fatalf("bad verbatim reply %q", line)
+		}
+		buf := make([]byte, n+2)
+		if _, err := io.ReadFull(c.r, buf); err != nil {
+			c.t.Fatal(err)
+		}
+		return respVerbatim(buf[4:n])
 	}
 	c.t.Fatalf("unexpected reply %q", line)
 	return nil
@@ -263,7 +298,7 @@ func TestCommands(t *testing.T) {
 		{errReply("ERR unknown command 'FOO', with args beginning with: 'bar'"), []string{"FOO", "bar"}},
 		{ok, []string{"SELECT", "0"}},
 		{errReply("ERR DB index is out of range"), []string{"SELECT", "1"}},
-		{errReply("NOPROTO"), []string{"HELLO", "3"}},
+		{errReply("NOPROTO"), []string{"HELLO", "4"}},
 		{ok, []string{"CLIENT", "SETNAME", "tester"}},
 		{"tester", []string{"CLIENT", "GETNAME"}},
 		{errReply("ERR Client names cannot contain spaces"), []string{"CLIENT", "SETNAME", "a b"}},
@@ -713,7 +748,7 @@ func TestAuth(t *testing.T) {
 
 	c2 := dial(t, addr)
 	c2.expect(errReply("NOAUTH HELLO must be called"), "HELLO", "2")
-	c2.expect(errReply("NOPROTO"), "HELLO", "3", "AUTH", "default", "s3cret")
+	c2.expect(errReply("NOPROTO"), "HELLO", "4", "AUTH", "default", "s3cret")
 	c2.expect(errReply("WRONGPASS"), "HELLO", "2", "AUTH", "default", "nope")
 	if hello, _ := c2.do("HELLO", "2", "AUTH", "default", "s3cret", "SETNAME", "app").([]any); len(hello) != 14 {
 		t.Fatalf("HELLO with AUTH = %#v", hello)

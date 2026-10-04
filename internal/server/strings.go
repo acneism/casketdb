@@ -499,7 +499,7 @@ func cmdLCS(tx *bitcask.Tx, args [][]byte) (reply, error) {
 		}
 	}
 	if getIdx {
-		return arrayReply{bulkReply("matches"), matches, bulkReply("len"), intReply(total)}, nil
+		return mapReply{bulkReply("matches"), matches, bulkReply("len"), intReply(total)}, nil
 	}
 	return bulkReply(result), nil
 }

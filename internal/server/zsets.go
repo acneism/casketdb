@@ -91,7 +91,7 @@ func formatScore(f float64) string {
 }
 
 func scoreReply(k []byte) reply {
-	return bulkReply(formatScore(keyScore(k)))
+	return doubleReply(formatScore(keyScore(k)))
 }
 
 type zitem struct {
@@ -104,6 +104,13 @@ func compareZItems(a, b zitem) int {
 		return c
 	}
 	return strings.Compare(a.member, b.member)
+}
+
+func scoredReply(items []zitem, withScores bool) reply {
+	if withScores {
+		return pairsReply(itemsReply(items, true))
+	}
+	return itemsReply(items, false)
 }
 
 func itemsReply(items []zitem, withScores bool) arrayReply {
@@ -389,7 +396,7 @@ func addScores(tx *bitcask.Tx, key []byte, scores []float64, members [][]byte, o
 	case o.incr && processed == 0:
 		return nilReply, nil
 	case o.incr:
-		return bulkReply(formatScore(result)), nil
+		return doubleReply(formatScore(result)), nil
 	case o.ch:
 		return intReply(added + updated), nil
 	}
@@ -596,7 +603,7 @@ func zrange(src int, by int, reverse bool) txFunc {
 		if store {
 			return storeZSet(tx, args[1], items)
 		}
-		return itemsReply(items, withScores), nil
+		return scoredReply(items, withScores), nil
 	}
 }
 
@@ -682,6 +689,9 @@ func zpop(highest bool) txFunc {
 			return arrayReply{}, nil
 		}
 		items, err := z.pop(count, highest)
+		if len(args) == 3 {
+			return pairsReply(itemsReply(items, true)), err
+		}
 		return itemsReply(items, true), err
 	}
 }
@@ -734,7 +744,7 @@ func cmdZScan(tx *bitcask.Tx, args [][]byte) (reply, error) {
 	items := arrayReply{}
 	err = z.each(true, func(member, score []byte) {
 		if match(member) {
-			items = append(items, bulkReply(member), scoreReply(score))
+			items = append(items, bulkReply(member), bulkReply(formatScore(keyScore(score))))
 		}
 	})
 	return arrayReply{bulkReply("0"), items}, err
@@ -931,7 +941,7 @@ func zsetAlgebra(op int, store, card bool) txFunc {
 		if store {
 			return storeZSet(tx, args[1], items)
 		}
-		return itemsReply(items, withScores), nil
+		return scoredReply(items, withScores), nil
 	}
 }
 

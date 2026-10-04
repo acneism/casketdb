@@ -717,7 +717,7 @@ func cmdXRead(tx *bitcask.Tx, args [][]byte) (reply, error) {
 			}
 		}
 	}
-	var out arrayReply
+	var out keyedReply
 	for i, s := range streams {
 		from, ok := after[i].next()
 		if !ok || s.length == 0 {
@@ -734,7 +734,7 @@ func cmdXRead(tx *bitcask.Tx, args [][]byte) (reply, error) {
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, arrayReply{bulkReply(r.keys[i]), entries})
+		out = append(out, bulkReply(r.keys[i]), entries)
 	}
 	switch {
 	case len(out) > 0:
@@ -800,7 +800,7 @@ func xinfoStream(tx *bitcask.Tx, args [][]byte) (reply, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := arrayReply{
+	out := mapReply{
 		bulkReply("length"), intReply(int64(s.length)),
 		bulkReply("radix-tree-keys"), intReply(0),
 		bulkReply("radix-tree-nodes"), intReply(0),

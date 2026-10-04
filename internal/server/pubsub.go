@@ -165,23 +165,29 @@ func (ps *subscriptions) publish(channel, message []byte, shard bool) int {
 	}
 	n := 0
 	if clients := ps.sets[kind][string(channel)]; len(clients) > 0 {
-		msg := encodePush([]byte(verb), channel, message)
-		for c := range clients {
-			c.out.push(msg)
-			n++
-		}
+		n += pushTo(clients, encodePush([]byte(verb), channel, message))
 	}
 	for pattern, clients := range ps.sets[subPattern] {
-		if shard || !matchGlob(pattern, string(channel)) {
-			continue
-		}
-		msg := encodePush([]byte("pmessage"), []byte(pattern), channel, message)
-		for c := range clients {
-			c.out.push(msg)
-			n++
+		if !shard && matchGlob(pattern, string(channel)) {
+			n += pushTo(clients, encodePush([]byte("pmessage"), []byte(pattern), channel, message))
 		}
 	}
 	return n
+}
+
+func pushTo(clients map[*client]struct{}, msg []byte) int {
+	var resp3 []byte
+	for c := range clients {
+		if c.proto.Load() != 3 {
+			c.out.push(msg)
+			continue
+		}
+		if resp3 == nil {
+			resp3 = append([]byte{'>'}, msg[1:]...)
+		}
+		c.out.push(resp3)
+	}
+	return len(clients)
 }
 
 func (ps *subscriptions) names(kind int, pattern []byte) stringsReply {
@@ -234,7 +240,8 @@ func subscribe(kind int) connFunc {
 				return multiReply{}
 			}
 			c.out = newOutQueue(c.conn)
-			c.w = resp.NewWriter(c.out)
+			w := resp.NewWriter(c.out)
+			w.Proto, c.w = c.w.Proto, w
 		}
 		c.pauseTimeout(true)
 		if c.subs[kind] == nil {
@@ -247,7 +254,7 @@ func subscribe(kind int) connFunc {
 				c.subs[kind][name] = true
 				s.subs.add(kind, name, c)
 			}
-			out = append(out, arrayReply{bulkReply(subVerbs[kind][0]), bulkReply(arg), intReply(c.subscriptions(kind))})
+			out = append(out, pushReply{bulkReply(subVerbs[kind][0]), bulkReply(arg), intReply(c.subscriptions(kind))})
 		}
 		return out
 	}
@@ -262,7 +269,7 @@ func unsubscribe(kind int) connFunc {
 			}
 		}
 		if len(names) == 0 {
-			return arrayReply{bulkReply(subVerbs[kind][1]), nilReply, intReply(c.subscriptions(kind))}
+			return pushReply{bulkReply(subVerbs[kind][1]), nilReply, intReply(c.subscriptions(kind))}
 		}
 		out := multiReply{}
 		for _, arg := range names {
@@ -270,7 +277,7 @@ func unsubscribe(kind int) connFunc {
 				delete(c.subs[kind], string(arg))
 				s.subs.remove(kind, string(arg), c)
 			}
-			out = append(out, arrayReply{bulkReply(subVerbs[kind][1]), bulkReply(arg), intReply(c.subscriptions(kind))})
+			out = append(out, pushReply{bulkReply(subVerbs[kind][1]), bulkReply(arg), intReply(c.subscriptions(kind))})
 		}
 		if !c.subscribed() {
 			c.pauseTimeout(false)

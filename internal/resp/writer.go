@@ -8,12 +8,13 @@ import (
 )
 
 type Writer struct {
-	bw  *bufio.Writer
-	num []byte
+	Proto int
+	bw    *bufio.Writer
+	num   []byte
 }
 
 func NewWriter(w io.Writer) *Writer {
-	return &Writer{bw: bufio.NewWriterSize(w, 16<<10)}
+	return &Writer{Proto: 2, bw: bufio.NewWriterSize(w, 16<<10)}
 }
 
 func (w *Writer) Simple(s string) {
@@ -47,6 +48,10 @@ func (w *Writer) BulkString(s string) {
 }
 
 func (w *Writer) Null() {
+	if w.Proto == 3 {
+		w.bw.WriteString("_\r\n")
+		return
+	}
 	w.bw.WriteString("$-1\r\n")
 }
 
@@ -55,7 +60,54 @@ func (w *Writer) Array(n int) {
 }
 
 func (w *Writer) NullArray() {
+	if w.Proto == 3 {
+		w.bw.WriteString("_\r\n")
+		return
+	}
 	w.bw.WriteString("*-1\r\n")
+}
+
+func (w *Writer) Map(n int) {
+	if w.Proto == 3 {
+		w.prefixed('%', int64(n))
+		return
+	}
+	w.prefixed('*', 2*int64(n))
+}
+
+func (w *Writer) Set(n int) {
+	w.aggregate('~', n)
+}
+
+func (w *Writer) Push(n int) {
+	w.aggregate('>', n)
+}
+
+func (w *Writer) aggregate(p byte, n int) {
+	if w.Proto == 3 {
+		w.prefixed(p, int64(n))
+		return
+	}
+	w.prefixed('*', int64(n))
+}
+
+func (w *Writer) Double(s string) {
+	if w.Proto == 3 {
+		w.line(',', s)
+		return
+	}
+	w.BulkString(s)
+}
+
+func (w *Writer) Verbatim(s string) {
+	if w.Proto == 3 {
+		w.prefixed('=', int64(len(s)+4))
+		w.bw.WriteString("txt:")
+		w.bw.WriteString(s)
+		w.bw.WriteString("\r\n")
+		return
+	}
+	w.BulkString(s)
 }
 
 func (w *Writer) Flush() error {
