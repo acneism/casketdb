@@ -52,7 +52,7 @@ wsl ./replica.test
 
 ### Fault-injection tests
 
-`cmd/casketdb` holds end-to-end tests that run real `casketdb` processes: three nodes, eight RESP clients doing SET, GET, INCR, DEL and MULTI/EXEC, and a nemesis. They check the recorded history for linearizability with [Porcupine](https://github.com/anishathalye/porcupine). They are skipped unless a duration is given:
+`cmd/casketdb` holds end-to-end tests that run real `casketdb` processes: three nodes, eight RESP clients and a nemesis. The clients work on strings (SET, GET, INCR, DEL), fields of hashes, members of sorted sets and sets, lists used as queues (RPUSH, LPOP, LINDEX, LLEN) and streams (XADD, XLEN, XREVRANGE), each also inside MULTI/EXEC. Hashes, sorted sets, sets and lists start each epoch with 200 elements, so every element is a record of its own. They check the recorded history for linearizability with [Porcupine](https://github.com/anishathalye/porcupine). They are skipped unless a duration is given:
 
 ```bash
 go test ./cmd/casketdb -run TestFaults -timeout 30m -args -fault.duration=5m

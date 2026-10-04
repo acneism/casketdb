@@ -21,6 +21,7 @@ Versions are listed newest first. CasketDB was called BitKV up to and including 
 - Pub/Sub: SUBSCRIBE, UNSUBSCRIBE, PSUBSCRIBE, PUNSUBSCRIBE, SSUBSCRIBE, SUNSUBSCRIBE, PUBLISH, SPUBLISH and PUBSUB, and the ACL category `@pubsub`. Each subscriber has its own output queue, limited to 32 MB. In a cluster, messages travel through the Raft log and reach subscribers on every node. See [pub/sub](docs/commands.md#pubsub).
 - RESP3: `HELLO 3` switches a connection to RESP3, with the maps, sets, doubles, pushes and verbatim strings Redis returns there; pub/sub messages arrive as pushes and a subscribed RESP3 client may run any command. See [connection](docs/commands.md#connection).
 - Client-side caching: `CLIENT TRACKING` with REDIRECT, BCAST, PREFIX, OPTIN and OPTOUT, `CLIENT CACHING`, `CLIENT TRACKINGINFO` and `CLIENT GETREDIR`; invalidations go as RESP3 pushes or to a RESP2 client subscribed to `__redis__:invalidate`, also from followers. See [client-side caching](docs/commands.md#client-side-caching).
+- The fault-injection tests also check hashes, sorted sets, sets, lists and streams. Hashes, sorted sets, sets and lists start with 200 elements, so every element is a record of its own. See [CONTRIBUTING](CONTRIBUTING.md#fault-injection-tests).
 - `NOTICE` credits Redis for the skiplist, HyperLogLog and geo algorithms that CasketDB follows.
 - Value types in records: `TYPE`, `SCAN … TYPE` and `WRONGTYPE` follow the type of a key. See [ADR 10](docs/adr/0010-value-types.md).
 

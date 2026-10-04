@@ -26,37 +26,65 @@ var (
 )
 
 const (
-	keys     = 50
-	minEpoch = 2 * time.Minute
+	keys      = 50
+	collKeys  = 10
+	hotFields = 5
+	fillers   = 200
+	minEpoch  = 2 * time.Minute
 )
 
-func epochKey(epoch, k int) string {
-	return fmt.Sprintf("e%d-k%d", epoch, k)
+func epochKey(epoch int, typ byte, k int) string {
+	return fmt.Sprintf("e%d-%c%d", epoch, typ, k)
+}
+
+func keysOf(typ byte) int {
+	if strings.IndexByte("hzs", typ) >= 0 {
+		return collKeys
+	}
+	return keys
 }
 
 type kvInput struct {
+	typ   byte
 	op    byte
 	key   string
+	field string
 	value int64
+}
+
+func (in kvInput) read() bool {
+	return in.op == 'g' || in.op == 'n'
 }
 
 type kvOutput struct {
 	exists  bool
 	value   int64
+	n       int64
 	unknown bool
 }
 
 type kvState struct {
+	init   bool
 	exists bool
 	value  int64
+	n      int
+	list   string
 }
+
+var listFill = func() string {
+	var b strings.Builder
+	for i := range fillers {
+		fmt.Fprintf(&b, "%d ", -i-1)
+	}
+	return b.String()
+}()
 
 var kvModel = porcupine.Model{
 	Partition: func(history []porcupine.Operation) [][]porcupine.Operation {
 		byKey := map[string][]porcupine.Operation{}
 		for _, op := range history {
-			k := op.Input.(kvInput).key
-			byKey[k] = append(byKey[k], op)
+			in := op.Input.(kvInput)
+			byKey[in.key+"\x00"+in.field] = append(byKey[in.key+"\x00"+in.field], op)
 		}
 		var out [][]porcupine.Operation
 		for _, ops := range byKey {
@@ -67,19 +95,31 @@ var kvModel = porcupine.Model{
 	Init: func() any { return kvState{} },
 	Step: func(state, input, output any) (bool, any) {
 		st, in, out := state.(kvState), input.(kvInput), output.(kvOutput)
+		if !st.init {
+			st.init = true
+			if in.typ == 'l' {
+				st.list, st.n = listFill, fillers
+			}
+		}
+		switch in.typ {
+		case 'l':
+			return listStep(st, in, out)
+		case 'x':
+			return streamStep(st, in, out)
+		}
 		read := out.exists == st.exists && (!st.exists || out.value == st.value)
 		switch in.op {
 		case 'g':
 			return read, st
 		case 's':
-			return true, kvState{exists: true, value: in.value}
+			return true, kvState{init: true, exists: true, value: in.value}
 		case 'i':
-			next := kvState{exists: true, value: st.value + 1}
+			next := kvState{init: true, exists: true, value: st.value + 1}
 			return out.unknown || out.value == next.value, next
 		case 'd':
-			return out.unknown || out.exists == st.exists, kvState{}
+			return out.unknown || out.exists == st.exists, kvState{init: true}
 		}
-		return out.unknown || read, kvState{exists: true, value: in.value}
+		return out.unknown || read, kvState{init: true, exists: true, value: in.value}
 	},
 	DescribeOperation: func(input, output any) string {
 		in, out := input.(kvInput), output.(kvOutput)
@@ -90,18 +130,80 @@ var kvModel = porcupine.Model{
 		case out.exists:
 			res = strconv.FormatInt(out.value, 10)
 		}
-		switch in.op {
-		case 'g':
-			return fmt.Sprintf("get(%s) -> %s", in.key, res)
-		case 's':
-			return fmt.Sprintf("set(%s, %d)", in.key, in.value)
-		case 'i':
-			return fmt.Sprintf("incr(%s) -> %s", in.key, res)
-		case 'd':
-			return fmt.Sprintf("del(%s) -> existed %v", in.key, out.exists)
+		if out.n != 0 {
+			res += fmt.Sprintf(" (length %d)", out.n)
 		}
-		return fmt.Sprintf("multi(get(%s) -> %s, set %d)", in.key, res, in.value)
+		var cmds []string
+		for _, cmd := range commands(in) {
+			cmds = append(cmds, strings.Join(cmd, " "))
+		}
+		return strings.Join(cmds, "; ") + " -> " + res
 	},
+}
+
+func listStep(st kvState, in kvInput, out kvOutput) (bool, any) {
+	v := strconv.FormatInt(in.value, 10) + " "
+	list := st.list
+	if in.op == 'm' {
+		list += v
+	}
+	head, rest, ok := strings.Cut(list, " ")
+	first, _ := strconv.ParseInt(head, 10, 64)
+	matches := out.exists == ok && (!ok || out.value == first)
+	switch in.op {
+	case 'g':
+		return matches, st
+	case 'n':
+		return out.value == int64(st.n), st
+	case 's':
+		next := kvState{init: true, list: st.list + v, n: st.n + 1}
+		return out.unknown || out.value == int64(next.n), next
+	case 'd':
+		if !ok {
+			return out.unknown || matches, st
+		}
+		return out.unknown || matches, kvState{init: true, list: rest, n: st.n - 1}
+	}
+	return out.unknown || matches && out.n == int64(st.n+1), kvState{init: true, list: rest, n: st.n}
+}
+
+func streamStep(st kvState, in kvInput, out kvOutput) (bool, any) {
+	next := kvState{init: true, exists: true, value: in.value, n: st.n + 1}
+	switch in.op {
+	case 'g':
+		return out.exists == st.exists && (!st.exists || out.value == st.value), st
+	case 'n':
+		return out.value == int64(st.n), st
+	case 's':
+		return true, next
+	}
+	return out.unknown || out.value == int64(next.n), next
+}
+
+func commands(in kvInput) [][]string {
+	k, f, v := in.key, in.field, strconv.FormatInt(in.value, 10)
+	var ops map[byte][]string
+	switch in.typ {
+	case 'h':
+		ops = map[byte][]string{'g': {"HGET", k, f}, 's': {"HSET", k, f, v}, 'i': {"HINCRBY", k, f, "1"}, 'd': {"HDEL", k, f}}
+	case 'z':
+		ops = map[byte][]string{'g': {"ZSCORE", k, f}, 's': {"ZADD", k, v, f}, 'i': {"ZINCRBY", k, "1", f}, 'd': {"ZREM", k, f}}
+	case 's':
+		ops = map[byte][]string{'g': {"SISMEMBER", k, f}, 's': {"SADD", k, f}, 'd': {"SREM", k, f}}
+	case 'l':
+		ops = map[byte][]string{'g': {"LINDEX", k, "0"}, 'n': {"LLEN", k}, 's': {"RPUSH", k, v}, 'd': {"LPOP", k}, 'm': {"LPOP", k}}
+	case 'x':
+		ops = map[byte][]string{'g': {"XREVRANGE", k, "+", "-", "COUNT", "1"}, 'n': {"XLEN", k}, 's': {"XADD", k, "*", "v", v}, 'm': {"XLEN", k}}
+	default:
+		ops = map[byte][]string{'g': {"GET", k}, 's': {"SET", k, v}, 'i': {"INCR", k}, 'd': {"DEL", k}}
+	}
+	switch {
+	case in.op != 'm':
+		return [][]string{ops[in.op]}
+	case ops['m'] != nil:
+		return [][]string{{"MULTI"}, ops['s'], ops['m'], {"EXEC"}}
+	}
+	return [][]string{{"MULTI"}, ops['g'], ops['s'], {"EXEC"}}
 }
 
 type outcome int
@@ -138,37 +240,50 @@ func bulkValue(reply any) (kvOutput, bool) {
 	return kvOutput{exists: true, value: n}, true
 }
 
-func (h *harness) execute(addr string, in kvInput) (kvOutput, outcome) {
-	switch in.op {
-	case 'g':
-		reply, err := h.pool.one(addr, "GET", in.key)
-		if err != nil {
-			return kvOutput{}, retry
+func output(in kvInput, reply any) (kvOutput, bool) {
+	switch r := reply.(type) {
+	case int64:
+		if in.op == 'd' || in.typ == 's' {
+			return kvOutput{exists: r == 1}, true
 		}
-		if out, ok := bulkValue(reply); ok {
-			return out, done
+		return kvOutput{exists: true, value: r}, true
+	case []any:
+		if len(r) == 0 {
+			return kvOutput{}, true
 		}
-		return kvOutput{}, retry
-	case 's':
-		if _, err := h.pool.one(addr, "SET", in.key, strconv.FormatInt(in.value, 10)); err != nil {
-			return kvOutput{}, writeFailed(err)
+		entry, _ := r[0].([]any)
+		if len(entry) != 2 {
+			return kvOutput{}, false
 		}
-		return kvOutput{}, done
-	case 'i':
-		reply, err := h.pool.one(addr, "INCR", in.key)
-		if err != nil {
-			return kvOutput{}, writeFailed(err)
+		fields, _ := entry[1].([]any)
+		if len(fields) != 2 {
+			return kvOutput{}, false
 		}
-		n, _ := reply.(int64)
-		return kvOutput{exists: true, value: n}, done
-	case 'd':
-		reply, err := h.pool.one(addr, "DEL", in.key)
-		if err != nil {
-			return kvOutput{}, writeFailed(err)
-		}
-		return kvOutput{exists: reply == int64(1)}, done
+		return bulkValue(fields[1])
 	}
-	replies, err := h.pool.do(addr, []string{"MULTI"}, []string{"GET", in.key}, []string{"SET", in.key, strconv.FormatInt(in.value, 10)}, []string{"EXEC"})
+	return bulkValue(reply)
+}
+
+func (h *harness) execute(addr string, in kvInput) (kvOutput, outcome) {
+	cmds := commands(in)
+	if in.op != 'm' {
+		reply, err := h.pool.one(addr, cmds[0]...)
+		switch {
+		case err != nil && in.read():
+			return kvOutput{}, retry
+		case err != nil:
+			return kvOutput{}, writeFailed(err)
+		}
+		out, ok := output(in, reply)
+		switch {
+		case !ok && in.read():
+			return kvOutput{}, retry
+		case !ok:
+			return kvOutput{}, unknown
+		}
+		return out, done
+	}
+	replies, err := h.pool.do(addr, cmds...)
 	if err != nil {
 		return kvOutput{}, writeFailed(err)
 	}
@@ -176,10 +291,17 @@ func (h *harness) execute(addr string, in kvInput) (kvOutput, outcome) {
 		return kvOutput{}, writeFailed(re)
 	}
 	results, ok := replies[3].([]any)
-	if !ok || len(results) != 2 || results[1] != "OK" {
+	if !ok || len(results) != 2 || slices.ContainsFunc(results, func(r any) bool { _, failed := r.(respError); return failed }) {
 		return kvOutput{}, unknown
 	}
-	out, ok := bulkValue(results[0])
+	reply := results[0]
+	if in.typ == 'l' || in.typ == 'x' {
+		reply = results[1]
+	}
+	out, ok := output(in, reply)
+	if in.typ == 'l' {
+		out.n, _ = results[0].(int64)
+	}
 	if !ok {
 		return kvOutput{}, unknown
 	}
@@ -187,7 +309,7 @@ func (h *harness) execute(addr string, in kvInput) (kvOutput, outcome) {
 }
 
 func randomInput(epoch, client, seq int) kvInput {
-	in := kvInput{key: epochKey(epoch, rand.IntN(keys)), value: int64(client*1_000_000 + seq)}
+	in := kvInput{typ: "khzslx"[rand.IntN(6)], value: int64(client*1_000_000 + seq)}
 	switch r := rand.IntN(20); {
 	case r < 9:
 		in.op = 'g'
@@ -200,7 +322,77 @@ func randomInput(epoch, client, seq int) kvInput {
 	default:
 		in.op = 'm'
 	}
+	in.key = epochKey(epoch, in.typ, rand.IntN(keysOf(in.typ)))
+	if keysOf(in.typ) == collKeys {
+		in.field = "f" + strconv.Itoa(rand.IntN(hotFields))
+	}
+	switch {
+	case in.typ == 's' && in.op == 'i', in.typ == 'x' && in.op == 'd':
+		in.op = 'g'
+	case (in.typ == 'l' || in.typ == 'x') && in.op == 'i':
+		in.op = 'n'
+	}
+	if in.typ == 's' {
+		in.value = 0
+	}
 	return in
+}
+
+func (h *harness) populate(epoch int) {
+	deadline := time.Now().Add(time.Minute)
+	for _, typ := range []byte("hzsl") {
+		for k := range keysOf(typ) {
+			key := epochKey(epoch, typ, k)
+			fill := []string{map[byte]string{'h': "HSET", 'z': "ZADD", 's': "SADD", 'l': "RPUSH"}[typ], key}
+			for i := range fillers {
+				switch x := "x" + strconv.Itoa(i); typ {
+				case 'h':
+					fill = append(fill, x, "0")
+				case 'z':
+					fill = append(fill, "0", x)
+				case 's':
+					fill = append(fill, x)
+				default:
+					fill = append(fill, strconv.Itoa(-i-1))
+				}
+			}
+			for target := h.pick(); ; {
+				replies, err := h.pool.do(target, []string{"MULTI"}, []string{"DEL", key}, fill, []string{"EXEC"})
+				if err == nil {
+					if results, ok := replies[3].([]any); ok && len(results) == 2 {
+						break
+					}
+				}
+				if time.Now().After(deadline) {
+					h.t.Fatalf("could not fill %s: %v %v", key, err, replies)
+				}
+				if target = h.leaderOf(h.pick()); target == "" {
+					target = h.pick()
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+		}
+	}
+}
+
+func finalReads(epoch int) []kvInput {
+	var out []kvInput
+	for _, typ := range []byte("khzslx") {
+		for k := range keysOf(typ) {
+			key := epochKey(epoch, typ, k)
+			switch typ {
+			case 'k':
+				out = append(out, kvInput{typ: typ, op: 'g', key: key})
+			case 'l', 'x':
+				out = append(out, kvInput{typ: typ, op: 'g', key: key}, kvInput{typ: typ, op: 'n', key: key})
+			default:
+				for f := range hotFields {
+					out = append(out, kvInput{typ: typ, op: 'g', key: key, field: "f" + strconv.Itoa(f)})
+				}
+			}
+		}
+	}
+	return out
 }
 
 func (h *harness) linearizability(d time.Duration, nemesis func(until time.Time)) {
@@ -212,6 +404,7 @@ func (h *harness) linearizability(d time.Duration, nemesis func(until time.Time)
 
 func (h *harness) checkEpoch(epoch int, d time.Duration, nemesis func(until time.Time)) {
 	t := h.t
+	h.populate(epoch)
 	start := time.Now()
 	now := func() int64 { return int64(time.Since(start)) }
 	deadline := start.Add(d)
@@ -233,7 +426,7 @@ func (h *harness) checkEpoch(epoch int, d time.Duration, nemesis func(until time
 			for seq := 0; time.Now().Before(deadline); seq++ {
 				in := randomInput(epoch, client, seq)
 				target := writer
-				if in.op == 'g' {
+				if in.read() {
 					target = h.pick()
 				}
 				call := now()
@@ -249,7 +442,7 @@ func (h *harness) checkEpoch(epoch int, d time.Duration, nemesis func(until time
 					client = int(clients.Add(1) - 1)
 					writer = h.pick()
 				default:
-					if in.op == 'g' {
+					if in.read() {
 						continue
 					}
 					if writer = h.leaderOf(h.pick()); writer == "" {
@@ -265,8 +458,7 @@ func (h *harness) checkEpoch(epoch int, d time.Duration, nemesis func(until time
 
 	final := int(clients.Add(1) - 1)
 	finalStart := time.Now()
-	for k := range keys {
-		in := kvInput{op: 'g', key: epochKey(epoch, k)}
+	for _, in := range finalReads(epoch) {
 		for {
 			call := now()
 			out, res := h.execute(h.pick(), in)
@@ -307,7 +499,8 @@ func (h *harness) checkEpoch(epoch int, d time.Duration, nemesis func(until time
 
 func (h *harness) dumpIllegalKeys(history []porcupine.Operation, start time.Time) {
 	for _, ops := range kvModel.Partition(history) {
-		if porcupine.CheckOperations(kvModel, ops) {
+		res := porcupine.CheckOperationsTimeout(kvModel, ops, time.Minute)
+		if res == porcupine.Ok {
 			continue
 		}
 		slices.SortFunc(ops, func(a, b porcupine.Operation) int { return int(a.Call - b.Call) })
@@ -320,10 +513,42 @@ func (h *harness) dumpIllegalKeys(history []porcupine.Operation, start time.Time
 			fmt.Fprintf(&b, "%-14v %-14s client %-4d %s\n", time.Duration(op.Call), ret, op.ClientId, kvModel.DescribeOperation(op.Input, op.Output))
 		}
 		key := ops[0].Input.(kvInput).key
+		if field := ops[0].Input.(kvInput).field; field != "" {
+			key += "-" + field
+		}
 		if err := os.WriteFile(filepath.Join(h.dir, "illegal-"+key+".txt"), []byte(b.String()), 0o600); err != nil {
 			h.t.Log(err)
 		}
-		h.t.Logf("key %s is not linearizable; started at %s", key, start.Format(time.RFC3339Nano))
+		h.t.Logf("key %s: %s; started at %s", key, res, start.Format(time.RFC3339Nano))
+	}
+}
+
+func TestKVModel(t *testing.T) {
+	in := func(typ, op byte, value int64) kvInput { return kvInput{typ: typ, op: op, key: "k", value: value} }
+	some := func(v int64) kvOutput { return kvOutput{exists: true, value: v} }
+	for _, c := range []struct {
+		name  string
+		legal bool
+		steps []any
+	}{
+		{"list", true, []any{in('l', 's', 5), some(201), in('l', 'g', 0), some(-1), in('l', 'd', 0), some(-1), in('l', 'n', 0), some(200), in('l', 'm', 6), kvOutput{exists: true, value: -2, n: 201}, in('l', 'g', 0), some(-3), in('l', 'n', 0), some(200)}},
+		{"list order", false, []any{in('l', 'd', 0), some(-2)}},
+		{"stream", true, []any{in('x', 's', 7), kvOutput{}, in('x', 'n', 0), some(1), in('x', 'g', 0), some(7), in('x', 'm', 8), some(2), in('x', 'g', 0), some(8)}},
+		{"stream length", false, []any{in('x', 'n', 0), some(1)}},
+		{"hash field", true, []any{in('h', 'g', 0), kvOutput{}, in('h', 's', 3), kvOutput{}, in('h', 'i', 0), some(4), in('h', 'g', 0), some(4), in('h', 'd', 0), kvOutput{exists: true}, in('h', 'g', 0), kvOutput{}}},
+		{"set member", false, []any{in('s', 's', 0), kvOutput{}, in('s', 'g', 0), kvOutput{}}},
+	} {
+		var ops []porcupine.Operation
+		for i := 0; i < len(c.steps); i += 2 {
+			ops = append(ops, porcupine.Operation{Input: c.steps[i], Output: c.steps[i+1], Call: int64(i), Return: int64(i + 1)})
+		}
+		if got := porcupine.CheckOperations(kvModel, ops); got != c.legal {
+			t.Errorf("%s: linearizable %v, want %v", c.name, got, c.legal)
+		}
+	}
+	entry := []any{[]any{"1-0", []any{"v", "7"}}}
+	if out, ok := output(in('x', 'g', 0), entry); !ok || out != some(7) {
+		t.Errorf("XREVRANGE reply read as %+v, %v", out, ok)
 	}
 }
 
