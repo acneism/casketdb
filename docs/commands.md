@@ -15,6 +15,7 @@ CasketDB implements the string subset of Redis 7 over RESP2. Semantics, replies 
 | HyperLogLog | PFADD, PFCOUNT, PFMERGE | See [HyperLogLog](#hyperloglog) |
 | Geo | GEOADD, GEODIST, GEOHASH, GEOPOS, GEOSEARCH, GEOSEARCHSTORE, GEORADIUS, GEORADIUS_RO, GEORADIUSBYMEMBER, GEORADIUSBYMEMBER_RO | See [geo](#geo) |
 | Streams | XADD, XRANGE, XREVRANGE, XLEN, XDEL, XTRIM, XREAD, XSETID, XGROUP, XREADGROUP, XACK, XPENDING, XCLAIM, XAUTOCLAIM, XINFO | See [streams](#streams) |
+| Pub/Sub | SUBSCRIBE, UNSUBSCRIBE, PSUBSCRIBE, PUNSUBSCRIBE, SSUBSCRIBE, SUNSUBSCRIBE, PUBLISH, SPUBLISH, PUBSUB | See [pub/sub](#pubsub) |
 | Keys | DEL, UNLINK, EXISTS, TYPE, OBJECT, KEYS, SCAN, DBSIZE | Glob patterns `*`, `?`, `[a-z]`, `[^x]`, `\`. SCAN accepts MATCH, COUNT, TYPE. OBJECT supports ENCODING only: `int`, `embstr` or `raw` for a string, as in Redis |
 | Expiry | EXPIRE, PEXPIRE, EXPIREAT, PEXPIREAT, TTL, PTTL, PERSIST | NX, XX, GT, LT. A time in the past deletes the key. TTL returns −2 for a missing key and −1 for a key without expiry |
 | Transactions | MULTI, EXEC, DISCARD, WATCH, UNWATCH | See [transactions](#transactions) |
@@ -27,7 +28,7 @@ CasketDB implements the string subset of Redis 7 over RESP2. Semantics, replies 
 
 ### Data types
 
-Strings, including the bitmap and HyperLogLog commands, hashes, sets, lists, sorted sets, including the geo commands, and streams. Pub/sub, Lua and Functions are not implemented.
+Strings, including the bitmap and HyperLogLog commands, hashes, sets, lists, sorted sets, including the geo commands, and streams, plus pub/sub. Lua and Functions are not implemented.
 
 ### Hashes
 
@@ -90,6 +91,19 @@ A consumer group lives in the record of its stream: its last delivered ID, its r
 
 XREAD with BLOCK waits like the [blocking commands](#blocking-commands). It is a read, so in a cluster it also waits on followers, and it wakes when the entry it waits for is applied there. XREADGROUP with BLOCK changes the group, so it waits on the leader only.
 
+### Pub/Sub
+
+A client that subscribes to a channel, a pattern or a shard channel may only send SUBSCRIBE, UNSUBSCRIBE and their P and S forms, PING, which answers `["pong", message]`, and QUIT, as in Redis over RESP2. Messages arrive as `message`, `pmessage` and `smessage`; a client subscribed to a channel and to a pattern that matches it receives both, and PUBLISH counts both. Shard channels are a namespace of their own: SPUBLISH reaches only SSUBSCRIBE.
+
+Differences from Redis:
+
+- Each subscriber has its own output queue, and a subscriber that falls more than 32 MB behind is disconnected, like the hard `client-output-buffer-limit pubsub` of Redis; there is no soft limit.
+- PUBLISH and SPUBLISH are not allowed inside MULTI.
+- In a cluster, PUBLISH and SPUBLISH run on the leader and reach subscribers on every node through the Raft log; their reply counts the subscribers of the leader. Followers answer `READONLY`. See [replication](replication.md#what-is-replicated).
+- ACL channel rules (`&channel`) are not supported, so any user allowed to run the commands may use any channel. Keyspace notifications are not supported.
+
+A subscribed client is not closed by `-timeout`.
+
 ### Blocking commands
 
 BLPOP, BRPOP, BLMPOP, BLMOVE, BRPOPLPUSH, BZPOPMIN, BZPOPMAX and BZMPOP wait for an element when every key they name is empty, as in Redis. The timeout is in seconds and may have a fraction; `0` waits forever. Clients waiting on the same key are served in the order they started to wait, and a client that waits on several keys takes from the first of them, in the order it named them, that has an element. Inside MULTI these commands do not wait: with nothing to pop they reply as if the timeout had passed. A waiting client is not closed by `-timeout`, and `INFO` counts waiting clients in `blocked_clients`.
@@ -133,7 +147,7 @@ Users work as in Redis 6 and later. `default` always exists; `CONFIG SET require
 
 Users are kept in the file `SYSTEM` in the data directory and survive restarts; once it exists, `-requirepass` is ignored at start, with a warning. In a cluster a change to users is a Raft entry: run it on the leader, a follower answers `READONLY`, and every node applies it and includes it in snapshots. FLUSHDB does not touch users.
 
-`ACL SETUSER` understands `on`, `off`, `>password`, `<password`, `#hash`, `!hash`, `nopass`, `resetpass`, `~pattern`, `allkeys`, `resetkeys`, `+command`, `-command`, `+@category`, `-@category`, `allcommands`, `nocommands` and `reset`. A new user starts `off`, without passwords, keys or commands. The categories are `keyspace`, `read`, `write`, `string`, `bitmap`, `hash`, `set`, `list`, `sortedset`, `blocking`, `hyperloglog`, `geo`, `stream`, `fast`, `slow`, `admin`, `dangerous`, `connection` and `transaction`, assigned as in Redis; `RAFT` is `@admin` and `@dangerous`. A denied command answers `NOPERM`, and inside MULTI it aborts EXEC. `ACL LOG [count|RESET]` lists the latest denials of commands, keys and logins on this node, newest first, up to 128; a repeat within a minute adds to the count of its entry.
+`ACL SETUSER` understands `on`, `off`, `>password`, `<password`, `#hash`, `!hash`, `nopass`, `resetpass`, `~pattern`, `allkeys`, `resetkeys`, `+command`, `-command`, `+@category`, `-@category`, `allcommands`, `nocommands` and `reset`. A new user starts `off`, without passwords, keys or commands. The categories are `keyspace`, `read`, `write`, `string`, `bitmap`, `hash`, `set`, `list`, `sortedset`, `blocking`, `hyperloglog`, `geo`, `stream`, `pubsub`, `fast`, `slow`, `admin`, `dangerous`, `connection` and `transaction`, assigned as in Redis; `RAFT` is `@admin` and `@dangerous`. A denied command answers `NOPERM`, and inside MULTI it aborts EXEC. `ACL LOG [count|RESET]` lists the latest denials of commands, keys and logins on this node, newest first, up to 128; a repeat within a minute adds to the count of its entry.
 
 Differences from Redis:
 

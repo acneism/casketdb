@@ -35,6 +35,8 @@ The leader replicates the effects of a command, not the command. It runs the com
 - applying an entry twice is harmless, since the operations are absolute;
 - WATCH and EXEC are checked on the leader against its local versions.
 
+PUBLISH and SPUBLISH run on the leader and travel through the Raft log as entries of their own; every node hands the message to its own subscribers when it applies the entry, so a client subscribed on any node receives it. See [pub/sub](commands.md#pubsub).
+
 ## Writes on the leader
 
 The transaction proposes its operations to Raft while it still holds its key locks, so the order of entries in the log matches the order of dependent writes. It then marks the new values as proposed, releases the locks and waits for the commit without them. The next write to the same key builds on the proposed value and does not wait for the previous Raft round, so a hot key is not limited to one write per round trip.

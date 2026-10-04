@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"sync/atomic"
 
 	"github.com/acneism/casketdb/internal/bitcask"
@@ -20,6 +21,7 @@ const (
 	kindFlush    byte = 2
 	kindSystem   byte = 3
 	kindTypedOps byte = 4
+	kindPublish  byte = 5
 	flagDelete   byte = 1
 	flagMember   byte = 2
 
@@ -38,6 +40,8 @@ type bitcaskFSM struct {
 	dir     string
 	applied atomic.Uint64
 	first   atomic.Uint64
+	publish atomic.Pointer[func(channel, message []byte, shard bool) int]
+	waiters sync.Map
 }
 
 func newBitcaskFSM(db *bitcask.DB, dir string) (*bitcaskFSM, error) {
@@ -89,6 +93,13 @@ func (f *bitcaskFSM) Apply(ents []raft.Entry) error {
 			if err := f.db.SetSystem(e.Data[1:]); err != nil {
 				return err
 			}
+		case kindPublish:
+			if err := flush(); err != nil {
+				return err
+			}
+			if err := f.deliver(e.Data[1:]); err != nil {
+				return err
+			}
 		default:
 			return errEntry
 		}
@@ -100,6 +111,37 @@ func (f *bitcaskFSM) Apply(ents []raft.Entry) error {
 		f.first.CompareAndSwap(0, ents[0].Index)
 		f.db.MarkApplied(ents[n-1].Index)
 		f.applied.Store(ents[n-1].Index)
+	}
+	return nil
+}
+
+func encodePublish(nonce uint64, channel, message []byte, shard bool) []byte {
+	b := []byte{kindPublish, 0}
+	if shard {
+		b[1] = 1
+	}
+	b = binary.LittleEndian.AppendUint64(b, nonce)
+	b = binary.AppendUvarint(b, uint64(len(channel)))
+	return append(append(b, channel...), message...)
+}
+
+func (f *bitcaskFSM) deliver(b []byte) error {
+	if len(b) < 9 {
+		return errEntry
+	}
+	shard, nonce := b[0] == 1, binary.LittleEndian.Uint64(b[1:])
+	r := bytes.NewReader(b[9:])
+	channel, err := readField(r)
+	if err != nil {
+		return errEntry
+	}
+	message := b[len(b)-r.Len():]
+	n := 0
+	if fn := f.publish.Load(); fn != nil {
+		n = (*fn)(channel, message, shard)
+	}
+	if w, ok := f.waiters.LoadAndDelete(nonce); ok {
+		w.(chan int) <- n
 	}
 	return nil
 }

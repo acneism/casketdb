@@ -51,6 +51,7 @@ type Server struct {
 	done      chan struct{}
 	wg        sync.WaitGroup
 	blocked   blockedClients
+	subs      subscriptions
 
 	nextID      atomic.Int64
 	connections atomic.Int64
@@ -79,6 +80,8 @@ type client struct {
 	dirty   bool
 	queue   []queued
 	watched map[string]bitcask.Version
+	subs    [3]map[string]bool
+	out     *outQueue
 }
 
 func New(db *bitcask.DB, cfg Config) *Server {
@@ -105,6 +108,7 @@ func New(db *bitcask.DB, cfg Config) *Server {
 	db.WatchWrites(s.blocked.signal)
 	if cfg.Replica != nil {
 		cfg.Replica.WatchLeadership(s.blocked.wakeAll)
+		cfg.Replica.WatchPublish(s.subs.publish)
 	}
 	if db.System() != nil && cfg.RequirePass != "" {
 		logger.Warn("-requirepass is ignored: users are stored in the database; change the password with CONFIG SET requirepass or ACL SETUSER default")
@@ -242,6 +246,7 @@ func (s *Server) serveClient(c *client) {
 		s.mu.Lock()
 		delete(s.clients, c)
 		s.mu.Unlock()
+		s.unsubscribeAll(c)
 		c.conn.Close()
 	}()
 	if c.refused != "" {
@@ -351,6 +356,20 @@ func (s *Server) execute(c *client, args [][]byte) {
 	case c.user != nil && !cmd.noAuth:
 		if msg := s.permission(c, cmd, args); msg != "" {
 			c.reject(errorReply(msg))
+			return
+		}
+	}
+	if c.subscribed() {
+		switch {
+		case !subscribedCommands[cmd.name]:
+			c.reject(errorReply("ERR Can't execute '" + cmd.name + "': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context"))
+			return
+		case cmd.name == "ping" && len(args) <= 2:
+			msg := []byte{}
+			if len(args) == 2 {
+				msg = args[1]
+			}
+			arrayReply{bulkReply("pong"), bulkReply(msg)}.writeTo(c.w)
 			return
 		}
 	}

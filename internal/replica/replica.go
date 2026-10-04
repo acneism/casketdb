@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"slices"
@@ -195,6 +196,34 @@ func (n *Node) watch() {
 
 func (n *Node) WatchLeadership(fn func()) {
 	n.onEvent.Store(&fn)
+}
+
+func (n *Node) WatchPublish(fn func(channel, message []byte, shard bool) int) {
+	n.fsm.publish.Store(&fn)
+}
+
+func (n *Node) Publish(channel, message []byte, shard bool) (int, error) {
+	term := n.ready.Load()
+	if term == 0 {
+		return 0, ErrNotLeader
+	}
+	nonce := rand.Uint64()
+	done := make(chan int, 1)
+	n.fsm.waiters.Store(nonce, done)
+	defer n.fsm.waiters.Delete(nonce)
+	p, err := n.propose(term, encodePublish(nonce, channel, message, shard))
+	if err != nil {
+		return 0, err
+	}
+	if err := n.wait(p); err != nil {
+		return 0, err
+	}
+	select {
+	case count := <-done:
+		return count, nil
+	case <-time.After(n.election):
+		return 0, ErrLeadershipLost
+	}
 }
 
 func (n *Node) propose(term uint64, data []byte) (node.Proposal, error) {

@@ -7,7 +7,7 @@ CasketDB is early software. This page lists what it does not do yet, and how eac
 These are deliberate choices, not missing features:
 
 - sharding data across nodes, as Redis Cluster does;
-- Lua scripting and pub/sub;
+- Lua scripting;
 - RESP3;
 - databases other than `db 0`.
 
