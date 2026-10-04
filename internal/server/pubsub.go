@@ -1,7 +1,6 @@
 package server
 
 import (
-	"errors"
 	"maps"
 	"net"
 	"slices"
@@ -12,7 +11,10 @@ import (
 	"github.com/acneism/casketdb/internal/resp"
 )
 
-const pubsubLimit = 32 << 20
+const (
+	pubsubLimit  = 32 << 20
+	replyBacklog = 1 << 20
+)
 
 const (
 	subChannel = iota
@@ -48,44 +50,80 @@ func (r multiReply) writeTo(w *resp.Writer) {
 }
 
 type outQueue struct {
-	conn   net.Conn
-	mu     sync.Mutex
-	buf    []byte
-	dead   bool
-	ready  chan struct{}
-	done   chan struct{}
-	exited chan struct{}
+	conn    net.Conn
+	mu      sync.Mutex
+	drained *sync.Cond
+	buf     []byte
+	held    []byte
+	holding bool
+	dead    bool
+	ready   chan struct{}
+	done    chan struct{}
+	exited  chan struct{}
 }
 
 func newOutQueue(conn net.Conn) *outQueue {
 	q := &outQueue{conn: conn, ready: make(chan struct{}, 1), done: make(chan struct{}), exited: make(chan struct{})}
+	q.drained = sync.NewCond(&q.mu)
 	go q.run()
 	return q
 }
 
 func (q *outQueue) Write(p []byte) (int, error) {
 	q.mu.Lock()
-	switch {
-	case q.dead:
+	for len(q.buf) >= replyBacklog && !q.dead {
+		q.drained.Wait()
+	}
+	if q.dead {
 		q.mu.Unlock()
 		return 0, net.ErrClosed
-	case len(q.buf)+len(p) > pubsubLimit:
-		q.dead = true
-		q.mu.Unlock()
-		q.conn.Close()
-		return 0, errors.New("output buffer limit reached")
 	}
 	q.buf = append(q.buf, p...)
 	q.mu.Unlock()
-	select {
-	case q.ready <- struct{}{}:
-	default:
-	}
+	q.wake()
 	return len(p), nil
 }
 
 func (q *outQueue) push(p []byte) {
-	_, _ = q.Write(p)
+	q.mu.Lock()
+	switch {
+	case q.dead:
+		q.mu.Unlock()
+	case len(q.buf)+len(q.held)+len(p) > pubsubLimit:
+		q.dead = true
+		q.drained.Broadcast()
+		q.mu.Unlock()
+		q.conn.Close()
+	case q.holding:
+		q.held = append(q.held, p...)
+		q.mu.Unlock()
+	default:
+		q.buf = append(q.buf, p...)
+		q.mu.Unlock()
+		q.wake()
+	}
+}
+
+func (q *outQueue) hold() {
+	q.mu.Lock()
+	q.holding = true
+	q.mu.Unlock()
+}
+
+func (q *outQueue) release() {
+	q.mu.Lock()
+	q.holding = false
+	q.buf = append(q.buf, q.held...)
+	q.held = nil
+	q.mu.Unlock()
+	q.wake()
+}
+
+func (q *outQueue) wake() {
+	select {
+	case q.ready <- struct{}{}:
+	default:
+	}
 }
 
 func (q *outQueue) run() {
@@ -99,6 +137,7 @@ func (q *outQueue) run() {
 		q.mu.Lock()
 		b := q.buf
 		q.buf = nil
+		q.drained.Broadcast()
 		q.mu.Unlock()
 		if len(b) == 0 {
 			continue
@@ -106,6 +145,7 @@ func (q *outQueue) run() {
 		if _, err := q.conn.Write(b); err != nil {
 			q.mu.Lock()
 			q.dead = true
+			q.drained.Broadcast()
 			q.mu.Unlock()
 			return
 		}
@@ -179,13 +219,13 @@ func pushTo(clients map[*client]struct{}, msg []byte) int {
 	var resp3 []byte
 	for c := range clients {
 		if c.proto.Load() != 3 {
-			c.out.push(msg)
+			c.out.Load().push(msg)
 			continue
 		}
 		if resp3 == nil {
 			resp3 = append([]byte{'>'}, msg[1:]...)
 		}
-		c.out.push(resp3)
+		c.out.Load().push(resp3)
 	}
 	return len(clients)
 }
@@ -223,6 +263,34 @@ func (c *client) subscribed() bool {
 	return len(c.subs[subChannel])+len(c.subs[subPattern])+len(c.subs[subShard]) > 0
 }
 
+func (c *client) useQueue() bool {
+	if c.out.Load() != nil {
+		return true
+	}
+	if err := c.w.Flush(); err != nil {
+		c.quit = true
+		return false
+	}
+	q := newOutQueue(c.conn)
+	q.hold()
+	w := resp.NewWriter(q)
+	w.Proto, c.w = c.w.Proto, w
+	c.out.Store(q)
+	return true
+}
+
+func (c *client) hold() {
+	if q := c.out.Load(); q != nil {
+		q.hold()
+	}
+}
+
+func (c *client) release() {
+	if q := c.out.Load(); q != nil {
+		q.release()
+	}
+}
+
 func (c *client) pauseTimeout(paused bool) {
 	if dc, ok := c.conn.(*deadlineConn); ok {
 		dc.paused.Store(paused)
@@ -234,14 +302,8 @@ func (c *client) pauseTimeout(paused bool) {
 
 func subscribe(kind int) connFunc {
 	return func(s *Server, c *client, args [][]byte) reply {
-		if c.out == nil {
-			if err := c.w.Flush(); err != nil {
-				c.quit = true
-				return multiReply{}
-			}
-			c.out = newOutQueue(c.conn)
-			w := resp.NewWriter(c.out)
-			w.Proto, c.w = c.w.Proto, w
+		if !c.useQueue() {
+			return multiReply{}
 		}
 		c.pauseTimeout(true)
 		if c.subs[kind] == nil {
@@ -292,8 +354,8 @@ func (s *Server) unsubscribeAll(c *client) {
 			s.subs.remove(kind, name, c)
 		}
 	}
-	if c.out != nil {
-		c.out.close()
+	if q := c.out.Load(); q != nil {
+		q.close()
 	}
 }
 

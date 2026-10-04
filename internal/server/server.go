@@ -52,6 +52,8 @@ type Server struct {
 	wg        sync.WaitGroup
 	blocked   blockedClients
 	subs      subscriptions
+	tracking  trackingTable
+	byID      map[int64]*client
 
 	nextID      atomic.Int64
 	connections atomic.Int64
@@ -68,21 +70,23 @@ type Server struct {
 }
 
 type client struct {
-	id      int64
-	conn    net.Conn
-	r       *resp.Reader
-	w       *resp.Writer
-	name    string
-	user    *user
-	refused string
-	quit    bool
-	multi   bool
-	dirty   bool
-	queue   []queued
-	watched map[string]bitcask.Version
-	subs    [3]map[string]bool
-	out     *outQueue
-	proto   atomic.Int32
+	id           int64
+	conn         net.Conn
+	r            *resp.Reader
+	w            *resp.Writer
+	name         string
+	user         *user
+	refused      string
+	quit         bool
+	multi        bool
+	dirty        bool
+	queue        []queued
+	watched      map[string]bitcask.Version
+	subs         [3]map[string]bool
+	out          atomic.Pointer[outQueue]
+	proto        atomic.Int32
+	caching      int
+	multiCaching int
 }
 
 func New(db *bitcask.DB, cfg Config) *Server {
@@ -100,13 +104,18 @@ func New(db *bitcask.DB, cfg Config) *Server {
 		started:   time.Now(),
 		listeners: make(map[net.Listener]struct{}),
 		clients:   make(map[*client]struct{}),
+		byID:      make(map[int64]*client),
 		done:      make(chan struct{}),
 		throttle:  authThrottle{hosts: make(map[string]failures)},
 	}
 	s.pass.Store(&cfg.RequirePass)
 	s.users = newUsers(cfg.RequirePass)
 	db.WatchSystem(s.loadSystem)
-	db.WatchWrites(s.blocked.signal)
+	db.WatchWrites(func(key string) {
+		s.blocked.signal(key)
+		s.invalidate(key)
+	})
+	db.WatchFlush(s.invalidateAll)
 	if cfg.Replica != nil {
 		cfg.Replica.WatchLeadership(s.blocked.wakeAll)
 		cfg.Replica.WatchPublish(s.subs.publish)
@@ -170,6 +179,7 @@ func (s *Server) Serve(ln net.Listener) error {
 			c.refused = denied
 		}
 		s.clients[c] = struct{}{}
+		s.byID[c.id] = c
 		s.wg.Add(1)
 		s.mu.Unlock()
 		s.connections.Add(1)
@@ -246,7 +256,9 @@ func (s *Server) serveClient(c *client) {
 	defer func() {
 		s.mu.Lock()
 		delete(s.clients, c)
+		delete(s.byID, c.id)
 		s.mu.Unlock()
+		s.setTracker(c, nil)
 		s.unsubscribeAll(c)
 		c.conn.Close()
 	}()
@@ -260,6 +272,7 @@ func (s *Server) serveClient(c *client) {
 	for !c.quit {
 		c.r.Unauthenticated = c.user == nil
 		args, err := c.r.ReadCommand()
+		c.hold()
 		if err != nil {
 			s.runBatch(c, batch)
 			var pe *resp.ProtocolError
@@ -285,6 +298,7 @@ func (s *Server) serveClient(c *client) {
 			if err := c.w.Flush(); err != nil {
 				return
 			}
+			c.release()
 		}
 	}
 }
@@ -309,6 +323,7 @@ func (s *Server) runBatch(c *client, batch []queued) {
 		return
 	}
 	defer s.recoverCommand(c, batch[0].args[0])
+	c.caching = 0
 	var keys []string
 	for _, q := range batch {
 		keys = q.cmd.keys.extract(q.args, keys)
@@ -374,6 +389,13 @@ func (s *Server) execute(c *client, args [][]byte) {
 			return
 		}
 	}
+	caching := c.caching
+	if cmd.name != "client" {
+		c.caching = 0
+		if cmd.name == "multi" {
+			c.multiCaching = caching
+		}
+	}
 	if c.multi && !cmd.inMulti {
 		if cmd.kind == kindConn {
 			c.reject(errorReply("ERR Command not allowed inside a transaction"))
@@ -383,6 +405,7 @@ func (s *Server) execute(c *client, args [][]byte) {
 		c.w.Simple("QUEUED")
 		return
 	}
+	s.trackRead(c, cmd, args, caching)
 	s.processed.Add(1)
 	start := s.clock()
 	r := s.run(c, cmd, args)

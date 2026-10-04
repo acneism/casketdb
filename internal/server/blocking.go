@@ -252,8 +252,10 @@ func (s *Server) block(c *client, cmd command, args [][]byte, b blockReply) repl
 		if _, still := r.(blockReply); !still {
 			return r
 		}
+		c.release()
 		select {
 		case <-w.ready:
+			c.hold()
 		case <-expired:
 			return nullArrayReply{}
 		case <-gone:

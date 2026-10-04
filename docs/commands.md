@@ -19,7 +19,7 @@ CasketDB implements the commands of Redis 7 listed below over RESP2 and RESP3. S
 | Keys | DEL, UNLINK, EXISTS, TYPE, OBJECT, KEYS, SCAN, DBSIZE | Glob patterns `*`, `?`, `[a-z]`, `[^x]`, `\`. SCAN accepts MATCH, COUNT, TYPE. OBJECT supports ENCODING only: `int`, `embstr` or `raw` for a string, as in Redis |
 | Expiry | EXPIRE, PEXPIRE, EXPIREAT, PEXPIREAT, TTL, PTTL, PERSIST | NX, XX, GT, LT. A time in the past deletes the key. TTL returns −2 for a missing key and −1 for a key without expiry |
 | Transactions | MULTI, EXEC, DISCARD, WATCH, UNWATCH | See [transactions](#transactions) |
-| Connection | PING, ECHO, QUIT, AUTH, SELECT, HELLO, CLIENT | CLIENT supports ID, GETNAME, SETNAME, SETINFO |
+| Connection | PING, ECHO, QUIT, AUTH, SELECT, HELLO, CLIENT | CLIENT supports ID, GETNAME, SETNAME, SETINFO, TRACKING, TRACKINGINFO, GETREDIR and CACHING |
 | Access control | ACL SETUSER, ACL GETUSER, ACL DELUSER, ACL LIST, ACL USERS, ACL WHOAMI, ACL CAT, ACL LOG | See [access control](#access-control) |
 | Server | INFO, FLUSHDB, FLUSHALL, SAVE, BGREWRITEAOF, COMMAND, CONFIG | See [server commands](#server-commands) |
 | Cluster | RAFT MEMBERS, RAFT ADDLEARNER, RAFT PROMOTE, RAFT REMOVE, RAFT TRANSFER | CasketDB's own commands, see [cluster administration](#cluster-administration) |
@@ -136,10 +136,20 @@ Outside MULTI, KEYS, SCAN and DBSIZE lock one shard at a time. The result is not
 
 ### Connection
 
-- `HELLO 3` switches a connection to RESP3 and `HELLO 2` back; both accept `AUTH` and `SETNAME`, and other versions return `-NOPROTO`. Over RESP3, replies take the types Redis gives them: maps for HGETALL, CONFIG GET, XREAD, XREADGROUP, XINFO, ACL GETUSER and `LCS … IDX`, sets for SMEMBERS, SINTER, SUNION, SDIFF and `SPOP … count`, doubles for scores and coordinates, pairs for WITHSCORES and WITHVALUES, a verbatim string for INFO, `_` for null, and pushes for pub/sub messages, where a subscribed client may also run any other command. Client-side caching (`CLIENT TRACKING`) is not supported.
+- `HELLO 3` switches a connection to RESP3 and `HELLO 2` back; both accept `AUTH` and `SETNAME`, and other versions return `-NOPROTO`. Over RESP3, replies take the types Redis gives them: maps for HGETALL, CONFIG GET, XREAD, XREADGROUP, XINFO, ACL GETUSER and `LCS … IDX`, sets for SMEMBERS, SINTER, SUNION, SDIFF and `SPOP … count`, doubles for scores and coordinates, pairs for WITHSCORES and WITHVALUES, a verbatim string for INFO, `_` for null, and pushes for pub/sub messages, where a subscribed client may also run any other command. See [client-side caching](#client-side-caching).
 - `AUTH <password>` signs in as `default`, `AUTH <user> <password>` as any user. Until a client authenticates, every command except AUTH, HELLO and QUIT returns `NOAUTH`. When `default` has no password, a new connection is signed in as `default` right away; in [protected mode](configuration.md#protected-mode), on by default, a client from another host gets `DENIED` instead and is disconnected.
 - After 10 failed `AUTH` attempts from one address within a second, `AUTH` and `HELLO … AUTH` from that address answer `ERR too many failed AUTH attempts` until the second is over, even with the right password. Redis has no such limit; see [client limits](configuration.md#client-limits).
 - Only database 0. `SELECT 0` succeeds; any other index returns an error.
+
+### Client-side caching
+
+`CLIENT TRACKING ON` makes the server remember the keys a client reads and send it an invalidation when one of them changes, then forget the key until the client reads it again, as in Redis. Over RESP3 the invalidation is a push, `["invalidate", [key]]`; over RESP2 it goes with `REDIRECT` to a client subscribed to `__redis__:invalidate`. `BCAST` with `PREFIX` invalidates every key that starts with a prefix, `OPTIN` and `OPTOUT` work with `CLIENT CACHING`, FLUSHDB and FLUSHALL send `["invalidate", null]`, and in a cluster a node sends invalidations as it applies writes, so a client may read and track on a follower.
+
+Differences from Redis:
+
+- `NOLOOP` is accepted but not honored: a client also gets invalidations for keys it changed itself.
+- The server remembers at most 1,000,000 keys, the default `tracking-table-max-keys` of Redis, and the limit cannot be changed; reading a new key beyond that invalidates one of the others.
+- A write that lands while a client reads a key may send the client an invalidation for the value it has just read. The server remembers the key before the read and sends the invalidation after the reply, so the client drops a fresh value rather than keeping a stale one.
 
 ### Access control
 

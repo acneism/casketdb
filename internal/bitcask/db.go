@@ -65,6 +65,7 @@ type DB struct {
 	system   []byte
 	onSystem func([]byte)
 	onWrite  atomic.Pointer[func(key string)]
+	onFlush  atomic.Pointer[func()]
 
 	stop     chan struct{}
 	stopOnce sync.Once
@@ -344,7 +345,14 @@ func (db *DB) Flush() error {
 			_ = syncDir(db.dir)
 		}
 	}
+	if fn := db.onFlush.Load(); fn != nil {
+		(*fn)()
+	}
 	return nil
+}
+
+func (db *DB) WatchFlush(fn func()) {
+	db.onFlush.Store(&fn)
 }
 
 type SnapshotFile struct {

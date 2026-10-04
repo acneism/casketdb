@@ -8,7 +8,6 @@ These are deliberate choices, not missing features:
 
 - sharding data across nodes, as Redis Cluster does;
 - Lua scripting;
-- client-side caching (`CLIENT TRACKING`);
 - databases other than `db 0`.
 
 ## Known limitations

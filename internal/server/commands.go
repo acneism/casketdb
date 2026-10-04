@@ -297,6 +297,9 @@ func cmdHello(s *Server, c *client, args [][]byte) reply {
 	c.name, c.user = name, u
 	c.w.Proto = proto
 	c.proto.Store(int32(proto))
+	if proto == 3 && s.tracker(c) != nil {
+		c.useQueue()
+	}
 	return mapReply{
 		bulkReply("server"), bulkReply("redis"),
 		bulkReply("version"), bulkReply(redisVersion),
@@ -336,6 +339,14 @@ func cmdClient(s *Server, c *client, args [][]byte) reply {
 		return okReply
 	case sub == "SETINFO" && len(args) == 4:
 		return okReply
+	case sub == "TRACKING" && len(args) >= 3:
+		return clientTracking(s, c, args)
+	case sub == "TRACKINGINFO" && len(args) == 2:
+		return clientTrackingInfo(s, c)
+	case sub == "GETREDIR" && len(args) == 2:
+		return clientGetRedir(s, c)
+	case sub == "CACHING" && len(args) == 3:
+		return clientCaching(s, c, args[2])
 	}
 	return unknownSubcommand(args)
 }

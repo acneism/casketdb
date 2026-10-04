@@ -91,6 +91,10 @@ func cmdExec(s *Server, c *client, args [][]byte) reply {
 	if dirty {
 		return errorReply("EXECABORT Transaction discarded because of previous errors.")
 	}
+	for _, q := range queue {
+		s.trackRead(c, q.cmd, q.args, c.multiCaching)
+	}
+	c.multiCaching = 0
 	var keys []string
 	writes, global := false, false
 	for _, q := range queue {
