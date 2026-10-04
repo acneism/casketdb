@@ -609,6 +609,39 @@ func TestRestartReplaysOnlyTail(t *testing.T) {
 	}
 }
 
+func TestPublishReachesEveryNode(t *testing.T) {
+	nodes := newCluster(t, 3, false)
+	var mu sync.Mutex
+	delivered := map[string][]string{}
+	for i, tn := range nodes {
+		tn.node.WatchPublish(func(channel, message []byte, shard bool) int {
+			mu.Lock()
+			defer mu.Unlock()
+			delivered[tn.id] = append(delivered[tn.id], fmt.Sprintf("%s=%s shard=%v", channel, message, shard))
+			return i + 10
+		})
+	}
+	l := leader(t, nodes)
+	if _, err := follower(nodes, l).node.Publish([]byte("c"), []byte("m"), false); !errors.Is(err, ErrNotLeader) {
+		t.Fatalf("Publish on a follower: %v, want ErrNotLeader", err)
+	}
+	n, err := l.node.Publish([]byte("c"), []byte("m"), true)
+	must(t, err)
+	if want := slices.Index(nodes, l) + 10; n != want {
+		t.Fatalf("Publish counted %d receivers, want the leader's %d", n, want)
+	}
+	eventually(t, "every node to deliver the message", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, tn := range nodes {
+			if !slices.Equal(delivered[tn.id], []string{"c=m shard=true"}) {
+				return false
+			}
+		}
+		return true
+	})
+}
+
 func TestSystemStateReplicates(t *testing.T) {
 	nodes := newCluster(t, 3, false)
 	l := leader(t, nodes)
