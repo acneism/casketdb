@@ -75,7 +75,7 @@ The engine side of speculative writes is `db.Propose(scope, term, fn, publish)`:
 
 ### Index marks
 
-`db.MarkApplied(i)` only stores `i`. When the engine syncs (`Sync`, the once-per-second background sync, `Close`) or, with `-appendfsync no`, flushes its queues, it first appends a mark record with the latest applied index to every log. A mark M in a log means every record of that log for entries ≤ M comes before it. Each log remembers which marks are covered by its last fsync (or its last write, with `-appendfsync no`); `DurableIndex` is the minimum over logs. On load, a log's mark is the largest mark that survived.
+`db.MarkApplied(i)` only stores `i`. When the engine syncs (`Sync`, the background sync once per second or, with `-appendfsync no`, every 30 seconds, `Close`) or, with `-appendfsync no`, flushes its queues once per second, it first appends a mark record with the latest applied index to every log. A mark M in a log means every record of that log for entries ≤ M comes before it. Each log remembers which marks are covered by its last fsync; `DurableIndex` is the minimum over logs, so the Raft log is never compacted past data that a power loss could take. On load, a log's mark is the largest mark that survived, and the active file is fsynced before it counts.
 
 ## On-disk format
 

@@ -10,7 +10,7 @@ The policies match `appendfsync` in Redis.
 | --- | --- | --- |
 | `always` | Reply after fsync. Group commit: one fsync covers every writer waiting at that moment | Nothing acknowledged |
 | `everysec` (default) | Background fsync once per second | Up to about 1 s of writes |
-| `no` | Fsync only on rotation, `SAVE` and shutdown | Whatever the OS had not flushed |
+| `no` | Fsync every 30 seconds, on rotation, `SAVE` and shutdown | Up to about 30 s of writes |
 
 `SAVE` forces an fsync of every log in any mode.
 

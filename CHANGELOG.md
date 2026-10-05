@@ -29,6 +29,10 @@ Versions are listed newest first. CasketDB was called BitKV up to and including 
 
 - `RAFT ADDLEARNER` replies with the `-raft-peers` value for the new node instead of `OK`, so a node can be added first and started with that value. See [adding a node](docs/replication.md#adding-a-node).
 
+### Fixed
+
+- With `-appendfsync no`, a node could refuse to start after a power loss, because the Raft log had been compacted past data that was written but not fsynced. The durable index now counts only fsynced data, and the `no` policy fsyncs every 30 seconds so that the log can still be compacted. See [persistence](docs/persistence.md).
+
 ### Upgrading from v0.13
 
 - Data directories open unchanged, but their `META` becomes version 2 at the first start, and v0.13 and older refuse the directory after that. Back it up first if you may need to go back.

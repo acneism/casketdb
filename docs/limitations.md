@@ -34,6 +34,5 @@ These are deliberate choices, not missing features:
 | Each node expires keys by its own clock | NTP; if needed, expiry as Raft entries from the leader |
 | An existing single-node database cannot join a cluster | Import through a snapshot when the cluster starts |
 | A learner added after the leader took its latest snapshot cannot catch up from a snapshot until the Raft log is compacted past that snapshot, up to about 65,536 writes later: it rejects the snapshot, whose membership does not include it, and the leader sends the same one again. `RAFT PROMOTE` times out meanwhile | A fix in the Raft library, github.com/acneism/raft v0.3.1: take a new snapshot for such a learner |
-| With `-appendfsync no`, a node may refuse to start after a power loss, because the Raft log was compacted past the surviving data | Start the node from an empty directory; or fsync data before compacting the Raft log |
 | Restoring a snapshot on a follower goes through a temporary database: about twice the key index in memory and a full rewrite of the data | Swap data files and rebuild the index in place |
 | No production track record. The fault-injection tests cover crashes, partitions, leadership transfers and membership changes, but not clock skew or disk faults | Real deployments; clock and disk faults in the fault-injection tests |

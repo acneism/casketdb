@@ -425,20 +425,26 @@ func TestDurableIndexSurvivesMergeAndFlush(t *testing.T) {
 	}
 }
 
-func TestDurableIndexWithoutFsyncFollowsWrites(t *testing.T) {
+func TestDurableIndexWithoutFsyncWaitsForSync(t *testing.T) {
 	o := multiOptions(4)
 	o.MaxFileSize = 1 << 20
 	db := mustOpen(t, t.TempDir(), o)
 	defer mustClose(t, db)
 	markedWrites(t, db, 1, 30)
 	db.writeQueued()
-	if got := db.DurableIndex(); got != 30 {
-		t.Fatalf("durable index after the writes reached the files = %d, want 30", got)
+	if got := db.DurableIndex(); got != 0 {
+		t.Fatalf("durable index before an fsync = %d, want 0", got)
 	}
 	img := mustOpen(t, diskImage(t, db, nil), o)
 	defer mustClose(t, img)
 	if got := img.DurableIndex(); got != 30 {
-		t.Fatalf("recovered durable index %d, want 30", got)
+		t.Fatalf("durable index recovered from files that survived = %d, want 30", got)
 	}
 	expectMarked(t, img, 30)
+	if err := db.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if got := db.DurableIndex(); got != 30 {
+		t.Fatalf("durable index after an fsync = %d, want 30", got)
+	}
 }

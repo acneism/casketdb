@@ -449,8 +449,10 @@ func (db *DB) Merge() error {
 }
 
 func (db *DB) startBackground() {
+	ticks := 0
 	db.every(time.Second, func() {
-		if db.policy() == SyncNo {
+		ticks++
+		if db.policy() == SyncNo && ticks%noSyncInterval != 0 {
 			db.writeQueued()
 			return
 		}

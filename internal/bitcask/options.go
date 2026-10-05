@@ -14,6 +14,8 @@ const (
 	SyncNo
 )
 
+const noSyncInterval = 30
+
 func (p SyncPolicy) String() string {
 	switch p {
 	case SyncAlways:

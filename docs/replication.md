@@ -141,7 +141,7 @@ Every node applies committed entries to its data files without waiting for an fs
 - The Raft log is compacted without snapshots, up to 65,536 entries behind the durable index, once at least 65,536 entries can be dropped.
 - On restart, a node replays only the entries after its durable index. Replay is idempotent.
 
-With `-appendfsync no`, the durable index follows writes to the files instead of fsyncs. That survives `kill -9`. After a power loss the Raft log may already be compacted past the data that survived; if no local snapshot covers the gap, the node refuses to start rather than diverge from the cluster.
+With `-appendfsync no`, the data files are fsynced every 30 seconds, so the durable index, and with it the compaction of the Raft log, trails by up to that much. After a power loss a node replays the entries after the last fsync from its Raft log.
 
 ## Snapshots
 
