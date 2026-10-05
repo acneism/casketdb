@@ -33,6 +33,7 @@ type shard struct {
 	count int
 	ttl   int
 	live  int64
+	churn uint64
 
 	ovMu      sync.Mutex
 	overlay   map[string]overlayEntry
@@ -211,11 +212,14 @@ func (s *shard) reset() {
 	s.m = make(map[string]entry)
 	s.tables = nil
 	s.count, s.ttl, s.live = 0, 0, 0
+	s.churn++
 }
 
 func (s *shard) set(key string, e entry) {
 	if old, ok := s.m[key]; ok {
 		s.forget(key, old)
+	} else {
+		s.churn++
 	}
 	s.m[key] = e
 	s.count++
@@ -241,6 +245,7 @@ func (s *shard) remove(key string) bool {
 	delete(s.m, key)
 	s.forget(key, old)
 	s.dropTable(key)
+	s.churn++
 	return true
 }
 

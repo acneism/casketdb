@@ -47,6 +47,7 @@ type Version struct {
 	exists bool
 	fileID uint32
 	offset int64
+	churn  uint64
 }
 
 type Tx struct {
@@ -666,7 +667,7 @@ func (tx *Tx) Version(key string) Version {
 	}
 	e, ok := s.m[key]
 	if !ok || e.expired(tx.now) {
-		return Version{}
+		return Version{churn: s.churn}
 	}
 	return Version{exists: true, fileID: e.fileID, offset: e.offset}
 }

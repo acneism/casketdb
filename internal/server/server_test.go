@@ -718,6 +718,22 @@ func TestWatch(t *testing.T) {
 	c1.expect(queued, "GET", "absent")
 	c1.expect(nil, "EXEC")
 
+	c1.expect(ok, "WATCH", "brief")
+	c2.expect(ok, "SET", "brief", "v")
+	c2.expect(int64(1), "DEL", "brief")
+	c1.expect(ok, "MULTI")
+	c1.expect(queued, "GET", "brief")
+	c1.expect(nil, "EXEC")
+
+	for i := range 200 {
+		c2.expect(int64(1), "HSET", "big", fmt.Sprintf("f%d", i), "v")
+	}
+	c1.expect(ok, "WATCH", "big")
+	c2.expect(int64(0), "HSET", "big", "f1", "changed")
+	c1.expect(ok, "MULTI")
+	c1.expect(queued, "HLEN", "big")
+	c1.expect(nil, "EXEC")
+
 	c1.expect(ok, "WATCH", "k")
 	c2.expect(ok, "SET", "k", "again")
 	c1.expect(ok, "UNWATCH")

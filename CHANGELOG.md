@@ -31,6 +31,7 @@ Versions are listed newest first. CasketDB was called BitKV up to and including 
 
 ### Fixed
 
+- WATCH did not notice a key that was created and deleted again between WATCH and EXEC. See [transactions](docs/commands.md#transactions).
 - With `-appendfsync no`, a node could refuse to start after a power loss, because the Raft log had been compacted past data that was written but not fsynced. The durable index now counts only fsynced data, and the `no` policy fsyncs every 30 seconds so that the log can still be compacted. See [persistence](docs/persistence.md).
 
 ### Upgrading from v0.13

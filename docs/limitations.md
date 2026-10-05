@@ -25,7 +25,7 @@ These are deliberate choices, not missing features:
 | The number of logs is fixed when a database is created | Offline redistribution of keys to a new number of logs |
 | KEYS, SCAN and DBSIZE outside MULTI are not a point-in-time snapshot | MVCC versions, or KEYS under an all-shard lock |
 | Merge checks every record's liveness with a separate shard lock | Batches grouped by shard |
-| WATCH fires spuriously after a merge and misses a key created and deleted in between | Per-shard version counters |
+| WATCH fires spuriously after a merge moves a watched key, and while a watched key is missing, when another key of its shard is created or deleted | A version per key, at 8 more bytes of memory per key |
 | FLUSHDB, CONFIG, INFO, SELECT and similar commands are rejected inside MULTI | Run them after the transaction commits |
 | Expiry depends on the system clock | Detect a backward clock jump at start |
 | No online backup | A backup command built on the hard-link snapshots |

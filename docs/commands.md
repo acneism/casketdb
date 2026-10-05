@@ -130,8 +130,8 @@ Outside MULTI, KEYS, SCAN and DBSIZE lock one shard at a time. The result is not
 
 - EXEC runs the queued commands in one transaction and writes them as one atomic batch.
 - A queued command with an unknown name or a wrong argument count aborts EXEC with `EXECABORT`, as in Redis.
-- WATCH compares the position of a key's last write. Expiry of a watched key counts as a change.
-- WATCH can fire spuriously after a background merge moves a key, and it does not notice a key that was created and deleted between WATCH and EXEC.
+- WATCH compares the position of a key's last write, and for a missing key a counter of the keys created and deleted in its shard, one of 1,024. Expiry of a watched key counts as a change, and so does a key created and deleted again between WATCH and EXEC.
+- WATCH can fire spuriously after a background merge moves a watched key, and, while a watched key is missing, when another key of its shard is created or deleted.
 - Connection and server commands (SELECT, INFO, CONFIG, FLUSHDB and others) are rejected inside MULTI with `ERR Command not allowed inside a transaction`.
 
 ### Connection
