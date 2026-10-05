@@ -19,6 +19,7 @@ func cmdRaft(s *Server, c *client, args [][]byte) reply {
 		return errorReply("ERR RAFT needs a cluster, start the node with -raft-id")
 	}
 	var err error
+	var out reply = okReply
 	switch sub := upper(args[1]); {
 	case sub == "MEMBERS" && len(args) == 2:
 		var out arrayReply
@@ -37,7 +38,16 @@ func cmdRaft(s *Server, c *client, args [][]byte) reply {
 		}
 		err = rep.TransferLeadership(to)
 	case sub == "ADDLEARNER" && len(args) == 4:
-		err = rep.AddLearner(string(args[2]), string(args[3]))
+		id, addr := string(args[2]), string(args[3])
+		if err = rep.AddLearner(id, addr); err == nil {
+			peers := id + "=" + addr
+			for _, m := range rep.Members() {
+				if m.ID != id {
+					peers += "," + m.ID + "=" + m.Addr
+				}
+			}
+			out = bulkReply(peers)
+		}
 	case sub == "PROMOTE" && len(args) == 3:
 		err = rep.Promote(string(args[2]))
 	case sub == "REMOVE" && len(args) == 3:
@@ -49,7 +59,7 @@ func cmdRaft(s *Server, c *client, args [][]byte) reply {
 		return raftError(rep, err)
 	}
 	s.audit(c, slog.LevelInfo, "RAFT command", c.user.name, "command", string(bytes.Join(args[1:], []byte(" "))))
-	return okReply
+	return out
 }
 
 func raftError(rep *replica.Node, err error) errorReply {

@@ -193,7 +193,7 @@ With consistent reads turned on, a read that no leader could confirm returns `-T
 | Command | Reply | Effect |
 | --- | --- | --- |
 | `RAFT MEMBERS` | Array of `[id, raft address, voter\|learner]` | The membership as this node knows it |
-| `RAFT ADDLEARNER id addr` | `OK` | Adds a node that was started with `-raft-join` as a learner |
+| `RAFT ADDLEARNER id addr` | The `-raft-peers` value for the new node | Adds a node as a learner; start it with `-raft-join` and that value. See [adding a node](replication.md#adding-a-node) |
 | `RAFT PROMOTE id` | `OK` | Waits until the learner has caught up, then makes it a voter |
 | `RAFT REMOVE id` | `OK` | Removes a voter or a learner; stop the removed node afterwards |
 | `RAFT TRANSFER [id]` | `OK` | Hands leadership to the node `id`, or to any other voter. See [leadership transfer](replication.md#leadership-transfer) |

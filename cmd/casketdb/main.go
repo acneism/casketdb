@@ -79,7 +79,7 @@ func main() {
 	flag.BoolVar(&cfg.raftNoFsync, "raft-unsafe-no-fsync", false, "skip fsync of the raft log: faster, but a power loss on one node followed by a leader failure can lose acknowledged writes")
 	flag.StringVar(&cfg.raftReads, "raft-reads", "local", "read consistency in a cluster: local (may be stale), linearizable (confirmed by the leader) or lease (the leader answers from its lease)")
 	flag.Float64Var(&cfg.raftDrift, "raft-max-clock-drift", 0.1, "largest relative difference between node clock rates that -raft-reads lease tolerates")
-	flag.BoolVar(&cfg.raftJoin, "raft-join", false, "join a running cluster: -raft-peers lists this node and every current member; add it on the leader with RAFT ADDLEARNER")
+	flag.BoolVar(&cfg.raftJoin, "raft-join", false, "join a running cluster: add the node on the leader with RAFT ADDLEARNER and pass its reply as -raft-peers")
 	flag.StringVar(&cfg.raftCert, "raft-tls-cert", "", "PEM certificate of this node for mutual TLS between nodes; its DNS name must be the node id")
 	flag.StringVar(&cfg.raftKey, "raft-tls-key", "", "PEM private key for -raft-tls-cert")
 	flag.StringVar(&cfg.raftCA, "raft-tls-ca", "", "PEM certificates of the CA that signs node certificates")

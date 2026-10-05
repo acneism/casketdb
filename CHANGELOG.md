@@ -25,6 +25,10 @@ Versions are listed newest first. CasketDB was called BitKV up to and including 
 - `NOTICE` credits Redis for the skiplist, HyperLogLog and geo algorithms that CasketDB follows.
 - Value types in records: `TYPE`, `SCAN … TYPE` and `WRONGTYPE` follow the type of a key. See [ADR 10](docs/adr/0010-value-types.md).
 
+### Changed
+
+- `RAFT ADDLEARNER` replies with the `-raft-peers` value for the new node instead of `OK`, so a node can be added first and started with that value. See [adding a node](docs/replication.md#adding-a-node).
+
 ### Upgrading from v0.13
 
 - Data directories open unchanged, but their `META` becomes version 2 at the first start, and v0.13 and older refuse the directory after that. Back it up first if you may need to go back.

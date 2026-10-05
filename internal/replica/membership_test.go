@@ -91,6 +91,22 @@ func TestJoinPromoteAndRemove(t *testing.T) {
 	eventually(t, "replication after the removal", converged(all, "after", "remove", 81))
 }
 
+func TestLearnerAddedBeforeItStarts(t *testing.T) {
+	nodes := newCluster(t, 3, false)
+	l := leader(t, nodes)
+	must(t, put(l, "k", "v"))
+	must(t, l.node.AddLearner("n3", freeAddr(t)))
+	peers := map[string]string{}
+	for _, m := range l.node.Members() {
+		peers[m.ID] = m.Addr
+	}
+	fresh := &testNode{id: "n3", dir: t.TempDir(), peers: peers, join: true}
+	fresh.start(t)
+	t.Cleanup(func() { fresh.stop(t) })
+	must(t, put(l, "k", "w"))
+	eventually(t, "the learner to catch up", converged(append(nodes, fresh), "k", "w", 1))
+}
+
 func TestLearnersJoinOneAfterAnotherBySnapshot(t *testing.T) {
 	t.Skip("acneism/raft v0.3.1 sends a learner the leader's latest snapshot even when it was taken before the learner was added; the learner rejects it, and no newer one is taken until the log is compacted past it")
 	nodes := newCluster(t, 3, false)

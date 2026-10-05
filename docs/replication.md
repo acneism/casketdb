@@ -61,17 +61,18 @@ Changes go one at a time and run on the leader. A second change while one is in 
 
 ### Adding a node
 
-1. Start the new node with an empty data directory, `-raft-join`, and `-raft-peers` listing itself and **every current member**, as `RAFT MEMBERS` shows them. A node that does not list the current leader rejects its messages and never catches up.
+1. On the leader, add the new node as a learner. A learner receives the log, or a snapshot if the log was compacted, but does not vote and does not count towards a majority, so a slow new node cannot stall the cluster. The reply is the `-raft-peers` value for the new node: itself and every current member.
+
+   ```bash
+   redis-cli -h 10.0.0.1 RAFT ADDLEARNER n4 10.0.0.4:7000
+   "n4=10.0.0.4:7000,n1=10.0.0.1:7000,n2=10.0.0.2:7000,n3=10.0.0.3:7000"
+   ```
+
+2. Start the new node with an empty data directory, `-raft-join`, and that `-raft-peers` value. A node that does not list the current leader rejects its messages and never catches up. The node may also be started before step 1, with the list built from `RAFT MEMBERS`.
 
    ```bash
    CASKETDB_REQUIREPASS=secret casketdb -addr 10.0.0.4:6379 -dir data -raft-id n4 -raft-join \
      -raft-peers n4=10.0.0.4:7000,n1=10.0.0.1:7000,n2=10.0.0.2:7000,n3=10.0.0.3:7000
-   ```
-
-2. On the leader, add it as a learner. A learner receives the log, or a snapshot if the log was compacted, but does not vote and does not count towards a majority, so a slow new node cannot stall the cluster.
-
-   ```bash
-   redis-cli -h 10.0.0.1 RAFT ADDLEARNER n4 10.0.0.4:7000
    ```
 
 3. Promote it to a voter. `RAFT PROMOTE` waits until the learner has caught up with the leader, up to 10 minutes, then makes it a voter.
