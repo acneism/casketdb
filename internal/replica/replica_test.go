@@ -148,20 +148,44 @@ func eventually(t testing.TB, what string, cond func() bool, explain ...func() s
 	}
 }
 
-func clusterState(nodes []*testNode) func() string {
+func nodeState(tn *testNode) string {
+	if tn.node == nil {
+		return "\n" + tn.id + ": stopped"
+	}
+	var snaps []string
+	des, _ := os.ReadDir(filepath.Join(tn.dir, "raft", "snap"))
+	for _, de := range des {
+		snaps = append(snaps, de.Name())
+	}
+	return fmt.Sprintf("\n%s: %+v durable=%d first=%s snap=%v", tn.id, tn.node.Status(), tn.db.DurableIndex(), walFirstIndex(tn), snaps)
+}
+
+func walFirstIndex(tn *testNode) string {
+	tmp, err := os.MkdirTemp("", "wal-")
+	if err == nil {
+		defer os.RemoveAll(tmp)
+		err = os.CopyFS(tmp, os.DirFS(filepath.Join(tn.dir, "raft", "wal")))
+	}
+	if err != nil {
+		return err.Error()
+	}
+	log, err := raftwal.Open(tmp, voters(tn), raftwal.Options{})
+	if err != nil {
+		return err.Error()
+	}
+	defer log.Close()
+	first, _ := log.FirstIndex()
+	return strconv.FormatUint(first, 10)
+}
+
+func clusterState(nodes []*testNode, before ...string) func() string {
 	return func() string {
 		var b strings.Builder
+		for _, line := range before {
+			b.WriteString(line)
+		}
 		for _, tn := range nodes {
-			if tn.node == nil {
-				fmt.Fprintf(&b, "\n%s: stopped", tn.id)
-				continue
-			}
-			var snaps []string
-			des, _ := os.ReadDir(filepath.Join(tn.dir, "raft", "snap"))
-			for _, de := range des {
-				snaps = append(snaps, de.Name())
-			}
-			fmt.Fprintf(&b, "\n%s: %+v durable=%d snap=%v", tn.id, tn.node.Status(), tn.db.DurableIndex(), snaps)
+			b.WriteString(nodeState(tn))
 		}
 		return b.String()
 	}
@@ -687,12 +711,13 @@ func TestSystemStateReplicates(t *testing.T) {
 		must(t, put(l, "k"+strconv.Itoa(i), "v"))
 	}
 	compact(t, nodes, l, "fill")
+	before := "\nthe leader before the restart:" + nodeState(l)
 	f.start(t)
 	eventually(t, "the lagging follower to install a snapshot", func() bool {
 		_, _, ok := latestSnapshot(f)
 		return ok
-	}, clusterState(nodes))
-	eventually(t, "the lagging follower to store v2", func() bool { return string(f.db.System()) == "v2" }, clusterState(nodes))
+	}, clusterState(nodes, before))
+	eventually(t, "the lagging follower to store v2", func() bool { return string(f.db.System()) == "v2" }, clusterState(nodes, before))
 }
 
 func TestLaggingFollowerCatchesUpBySnapshot(t *testing.T) {
@@ -704,10 +729,11 @@ func TestLaggingFollowerCatchesUpBySnapshot(t *testing.T) {
 		must(t, put(l, "k"+strconv.Itoa(i), "v"))
 	}
 	compact(t, nodes, l, "fill")
+	before := "\nthe leader before the restart:" + nodeState(l)
 	f.start(t)
-	eventually(t, "lagging follower to catch up", converged(nodes, "fill19", "v", 80), clusterState(nodes))
+	eventually(t, "lagging follower to catch up", converged(nodes, "fill19", "v", 80), clusterState(nodes, before))
 	eventually(t, "the lagging follower to install a snapshot", func() bool {
 		_, _, ok := latestSnapshot(f)
 		return ok
-	}, clusterState(nodes))
+	}, clusterState(nodes, before))
 }
