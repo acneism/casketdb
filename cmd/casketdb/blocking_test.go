@@ -79,8 +79,16 @@ func TestBlockingAcrossLeaderChange(t *testing.T) {
 
 	blocked := blockOn(t, leader.client, "BLPOP", "q", "0")
 	h.waitBlocked(leader.client, 1)
-	if _, err := h.pool.one(leader.client, "RAFT", "TRANSFER", follower.id); err != nil {
-		t.Fatalf("RAFT TRANSFER: %v", err)
+	for attempt := 1; ; attempt++ {
+		_, err := h.pool.one(leader.client, "RAFT", "TRANSFER", follower.id)
+		if err == nil || strings.Contains(err.Error(), "not the leader") {
+			break
+		}
+		if attempt == 5 {
+			t.Fatalf("RAFT TRANSFER: %v", err)
+		}
+		t.Logf("RAFT TRANSFER: %v; retrying", err)
+		time.Sleep(200 * time.Millisecond)
 	}
 	if got := blocked(); fmt.Sprint(got) != "UNBLOCKED force unblock from blocking operation, instance state changed (master -> replica?)" {
 		t.Fatalf("a client blocked on the old leader got %#v", got)
