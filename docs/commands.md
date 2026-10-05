@@ -16,7 +16,7 @@ CasketDB implements the commands of Redis 7 listed below over RESP2 and RESP3. S
 | Geo | GEOADD, GEODIST, GEOHASH, GEOPOS, GEOSEARCH, GEOSEARCHSTORE, GEORADIUS, GEORADIUS_RO, GEORADIUSBYMEMBER, GEORADIUSBYMEMBER_RO | See [geo](#geo) |
 | Streams | XADD, XRANGE, XREVRANGE, XLEN, XDEL, XTRIM, XREAD, XSETID, XGROUP, XREADGROUP, XACK, XPENDING, XCLAIM, XAUTOCLAIM, XINFO | See [streams](#streams) |
 | Pub/Sub | SUBSCRIBE, UNSUBSCRIBE, PSUBSCRIBE, PUNSUBSCRIBE, SSUBSCRIBE, SUNSUBSCRIBE, PUBLISH, SPUBLISH, PUBSUB | See [pub/sub](#pubsub) |
-| Keys | DEL, UNLINK, EXISTS, TYPE, OBJECT, KEYS, SCAN, DBSIZE | Glob patterns `*`, `?`, `[a-z]`, `[^x]`, `\`. SCAN accepts MATCH, COUNT, TYPE. OBJECT supports ENCODING only: `int`, `embstr` or `raw` for a string, as in Redis |
+| Keys | DEL, UNLINK, EXISTS, TYPE, RENAME, RENAMENX, COPY, OBJECT, KEYS, SCAN, DBSIZE | Glob patterns `*`, `?`, `[a-z]`, `[^x]`, `\`. SCAN accepts MATCH, COUNT, TYPE. COPY accepts REPLACE and `DB 0`. OBJECT supports ENCODING only, see [data types](#data-types) |
 | Expiry | EXPIRE, PEXPIRE, EXPIREAT, PEXPIREAT, TTL, PTTL, PERSIST | NX, XX, GT, LT. A time in the past deletes the key. TTL returns −2 for a missing key and −1 for a key without expiry |
 | Transactions | MULTI, EXEC, DISCARD, WATCH, UNWATCH | See [transactions](#transactions) |
 | Connection | PING, ECHO, QUIT, AUTH, SELECT, HELLO, CLIENT | CLIENT supports ID, GETNAME, SETNAME, SETINFO, TRACKING, TRACKINGINFO, GETREDIR and CACHING |
@@ -30,9 +30,12 @@ CasketDB implements the commands of Redis 7 listed below over RESP2 and RESP3. S
 
 Strings, including the bitmap and HyperLogLog commands, hashes, sets, lists, sorted sets, including the geo commands, and streams, plus pub/sub. Lua and Functions are not implemented.
 
+- `OBJECT ENCODING` tells how CasketDB stores a value. For a string it answers `int`, `embstr` or `raw` from the value, as Redis does after SET; Redis also keeps `raw` after APPEND, SETRANGE, SETBIT, BITOP or BITFIELD, and answers `embstr` for the result of INCRBYFLOAT. For a collection it follows the thresholds below, which differ from Redis for hashes and lists.
+- RENAME, RENAMENX and COPY of a collection stored one element per record rewrite every element, so they take time in proportion to its size, where Redis moves or duplicates the value in memory.
+
 ### Hashes
 
-A hash has two encodings, with the thresholds of Redis:
+A hash has the two encodings of Redis, but changes encoding at 128 fields, where Redis does at 512 (`hash-max-listpack-entries`), because a change of a hash stored as one value rewrites all of it:
 
 - Up to 128 fields, none of them and none of their values longer than 64 bytes, the hash is one value, its fields in the order they were added. `OBJECT ENCODING` answers `listpack`. A change rewrites the whole hash.
 - Beyond that, each field is a record of its own, and a change writes only the fields it touches plus a small record with the field count. `OBJECT ENCODING` answers `hashtable`. Like Redis, a hash never goes back to `listpack`, even when it shrinks.
@@ -49,7 +52,7 @@ A set uses the same two encodings as a hash, with the same thresholds: up to 128
 
 ### Lists
 
-Up to 128 elements of up to 64 bytes a list is one value (`listpack`); beyond that each element is a record of its own, numbered by its position (`quicklist`). Pushing, popping, LINDEX, LSET and LRANGE then touch only the elements they name. LINSERT, LREM, and LTRIM that keeps the smaller part of a list, rewrite the elements that stay. A list never goes back to `listpack`.
+Up to 128 elements of up to 64 bytes a list is one value (`listpack`); beyond that each element is a record of its own, numbered by its position (`quicklist`). Pushing, popping, LINDEX, LSET and LRANGE then touch only the elements they name. LINSERT, LREM, and LTRIM that keeps the smaller part of a list, rewrite the elements that stay. A list never goes back to `listpack`. Redis 7.2 changes the encoding of a list by its size in bytes (`list-max-listpack-size`, 8 KB) rather than by the number of elements, and goes back to `listpack` when a list shrinks, so `OBJECT ENCODING` of a list can differ.
 
 ### Sorted sets
 

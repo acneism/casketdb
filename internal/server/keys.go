@@ -1,6 +1,8 @@
 package server
 
 import (
+	"bytes"
+	"encoding/binary"
 	"math"
 	"strconv"
 	"strings"
@@ -24,6 +26,92 @@ var keyCommands = map[string]command{
 	"ttl":       {arity: 2, kind: kindRead, keys: oneKey, acl: catKeyspace | catFast, tx: cmdTTL},
 	"pttl":      {arity: 2, kind: kindRead, keys: oneKey, acl: catKeyspace | catFast, tx: cmdPTTL},
 	"persist":   {arity: 2, kind: kindWrite, keys: oneKey, acl: catKeyspace | catFast, tx: cmdPersist},
+	"rename":    {arity: 3, kind: kindWrite, keys: keySpec{first: 1, last: 2, step: 1}, acl: catKeyspace, tx: cmdRename(false)},
+	"renamenx":  {arity: 3, kind: kindWrite, keys: keySpec{first: 1, last: 2, step: 1}, acl: catKeyspace | catFast, tx: cmdRename(true)},
+	"copy":      {arity: -3, kind: kindWrite, keys: keySpec{first: 1, last: 2, step: 1}, acl: catKeyspace, tx: cmdCopy},
+}
+
+func copyKey(tx *bitcask.Tx, src, dst string) error {
+	value, kind, _, err := tx.GetKind(src)
+	if err != nil {
+		return err
+	}
+	expireAt, _ := tx.ExpireAt(src)
+	tx.Delete(dst)
+	if kind&bitcask.Table == 0 {
+		tx.PutKind(dst, kind, value, expireAt)
+		return nil
+	}
+	type pair struct {
+		member string
+		value  []byte
+	}
+	var members []pair
+	err = tx.Members(src, true, func(member string, v []byte) bool {
+		members = append(members, pair{member, bytes.Clone(v)})
+		return true
+	})
+	if err != nil {
+		return err
+	}
+	tx.PutKind(dst, kind, append(binary.LittleEndian.AppendUint64(nil, newGen()), value[8:]...), expireAt)
+	for _, m := range members {
+		tx.PutMember(dst, m.member, m.value)
+	}
+	return nil
+}
+
+func cmdRename(nx bool) txFunc {
+	return func(tx *bitcask.Tx, args [][]byte) (reply, error) {
+		src, dst := string(args[1]), string(args[2])
+		switch {
+		case !tx.Exists(src):
+			return errorReply("ERR no such key"), nil
+		case src == dst && nx:
+			return intReply(0), nil
+		case src == dst:
+			return okReply, nil
+		case nx && tx.Exists(dst):
+			return intReply(0), nil
+		}
+		if err := copyKey(tx, src, dst); err != nil {
+			return nil, err
+		}
+		tx.Delete(src)
+		if nx {
+			return intReply(1), nil
+		}
+		return okReply, nil
+	}
+}
+
+func cmdCopy(tx *bitcask.Tx, args [][]byte) (reply, error) {
+	replace := false
+	for i := 3; i < len(args); i++ {
+		switch opt := upper(args[i]); {
+		case opt == "REPLACE":
+			replace = true
+		case opt == "DB" && i+1 < len(args):
+			i++
+			db, ok := parseInt(args[i])
+			switch {
+			case !ok || db < math.MinInt32 || db > math.MaxInt32:
+				return errorReply(errNotInteger), nil
+			case db != 0:
+				return errorReply("ERR DB index is out of range"), nil
+			}
+		default:
+			return errorReply(errSyntax), nil
+		}
+	}
+	src, dst := string(args[1]), string(args[2])
+	switch {
+	case src == dst:
+		return errorReply("ERR source and destination objects are the same"), nil
+	case !tx.Exists(src), !replace && tx.Exists(dst):
+		return intReply(0), nil
+	}
+	return intReply(1), copyKey(tx, src, dst)
 }
 
 func cmdDel(tx *bitcask.Tx, args [][]byte) (reply, error) {

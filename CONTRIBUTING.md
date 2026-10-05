@@ -50,6 +50,16 @@ GOOS=linux go test -c -o replica.test ./internal/replica
 wsl ./replica.test
 ```
 
+### Differential tests
+
+`TestDifferential` in `internal/server` sends the same random commands, over all data types, to an in-process CasketDB and to a real Redis 7.2, and compares the replies. Replies whose order Redis leaves open, such as SMEMBERS and HGETALL, are sorted first, and the differences that [commands](docs/commands.md#differences-from-redis) documents are tolerated. A difference prints the command, both replies and the earlier commands on the same keys. The test is skipped unless `CASKETDB_REDIS_ADDR` names a Redis server, which it flushes:
+
+```bash
+CASKETDB_REDIS_ADDR=127.0.0.1:6379 go test -run TestDifferential -v ./internal/server
+```
+
+`CASKETDB_DIFF_SEED` picks another sequence of commands and `CASKETDB_DIFF_STEPS` sets its length, 20,000 by default.
+
 ### Fault-injection tests
 
 `cmd/casketdb` holds end-to-end tests that run real `casketdb` processes: three nodes, eight RESP clients and a nemesis. The clients work on strings (SET, GET, INCR, DEL), fields of hashes, members of sorted sets and sets, lists used as queues (RPUSH, LPOP, LINDEX, LLEN) and streams (XADD, XLEN, XREVRANGE), each also inside MULTI/EXEC. Hashes, sorted sets, sets and lists start each epoch with 200 elements, so every element is a record of its own. They check the recorded history for linearizability with [Porcupine](https://github.com/anishathalye/porcupine). They are skipped unless a duration is given:
@@ -76,6 +86,7 @@ wsl ./fault.test -test.run TestFaults -test.timeout 30m -fault.duration=5m -faul
 - `go mod tidy -diff`, [golangci-lint](#linters) and govulncheck;
 - `go vet` and `go test` on Linux, Windows and macOS; on Linux with coverage, listed in the run's summary. Coverage of `internal/bitcask`, `internal/replica` and `internal/server` below 80% fails the run;
 - `go test -race` on Linux;
+- the [differential test](#differential-tests) against a `redis:7.2` service container;
 - the fuzz tests: one minute of `FuzzReadCommand` (the RESP reader) and 30 seconds each of `FuzzACLRules` (ACL rules stored in `SYSTEM` and loaded back), `FuzzScanner` (records of a data file), `FuzzEntry` (Raft entries) and `FuzzSnapshotInfo` (the file list of a snapshot).
 
 The [nightly workflow](.github/workflows/nightly.yml), which can also be started by hand, runs govulncheck, so a new advisory shows up without a push, `TestFaults` with linearizable reads, `TestFaults` with lease reads and `TestMembershipChanges`, ten minutes each, and every fuzz test for ten minutes. A failed run keeps the node logs, the Porcupine visualization or the failing fuzz input as build artifacts. To fuzz locally, run for example `go test -run '^$' -fuzz '^FuzzEntry$' -fuzztime 5m ./internal/replica`; a failing input lands in the package's `testdata/fuzz` directory and becomes a regression test once committed.
