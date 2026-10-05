@@ -2,7 +2,7 @@
 
 Versions are listed newest first. CasketDB was called BitKV up to and including v0.9.
 
-## Unreleased
+## v0.14 — 2026-10-05
 
 ### Added
 
@@ -36,6 +36,10 @@ Versions are listed newest first. CasketDB was called BitKV up to and including 
 
 - WATCH did not notice a key that was created and deleted again between WATCH and EXEC. See [transactions](docs/commands.md#transactions).
 - With `-appendfsync no`, a node could refuse to start after a power loss, because the Raft log had been compacted past data that was written but not fsynced. The durable index now counts only fsynced data, and the `no` policy fsyncs every 30 seconds so that the log can still be compacted. See [persistence](docs/persistence.md).
+
+### Known issues
+
+- Still open from v0.12: a learner added after the leader took its latest snapshot cannot catch up until the log is compacted past that snapshot, so `RAFT PROMOTE` times out. See [limitations](docs/limitations.md).
 
 ### Upgrading from v0.13
 
