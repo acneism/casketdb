@@ -17,6 +17,7 @@ CasketDB is configured with command-line flags or the matching [environment vari
 | `-timeout` | `0` | Close a client that sends nothing, or reads none of its replies, for this long, for example `5m`; `0` turns it off |
 | `-dir` | `data` | Data directory |
 | `-logs` | `0` (= 4) | Number of parallel logs for a new database. An existing database keeps the number stored in its `META`; a different non-zero value is an error |
+| `-relog-to` | | Copy the stopped database in `-dir` into this empty directory with `-logs` logs, then exit; see [changing the number of logs](persistence.md#changing-the-number-of-logs) |
 | `-appendfsync` | `everysec` | `always`, `everysec` or `no`, see [persistence](persistence.md) |
 | `-max-file-size` | 64 MB | Size at which a log rotates to a new data file |
 | `-merge-ratio` | `0.5` | Share of dead bytes in a log that triggers an automatic merge |

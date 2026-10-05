@@ -197,21 +197,7 @@ func (f *bitcaskFSM) Restore(src node.SnapshotSource) error {
 	if err := f.db.Flush(); err != nil {
 		return err
 	}
-	batch := make([]bitcask.Op, 0, restoreBatch)
-	err = from.Dump(func(op bitcask.Op) error {
-		if batch = append(batch, op); len(batch) < restoreBatch {
-			return nil
-		}
-		err := f.db.Apply(batch, 0)
-		batch = batch[:0]
-		return err
-	})
-	if err == nil {
-		err = f.db.Apply(batch, 0)
-	}
-	if err == nil {
-		err = f.db.SetSystem(from.System())
-	}
+	err = from.CopyTo(f.db, restoreBatch)
 	if err == nil {
 		f.db.MarkApplied(src.Meta.Index)
 		err = f.db.Sync()

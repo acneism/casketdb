@@ -22,7 +22,7 @@ These are deliberate choices, not missing features:
 | `CONFIG SET appendfsync` and `proto-max-bulk-len` change one node and last until restart | Store them with the users, as Raft entries |
 | A cross-log transaction costs two write rounds plus about 60 bytes of header and commit per log | Hash tags like `{user}:…` in Redis Cluster, so that related keys land in one log |
 | With `everysec` or `no`, a power loss can break the atomicity of a cross-log transaction | Fsync the parts before the commit records |
-| The number of logs is fixed when a database is created | Offline redistribution of keys to a new number of logs |
+| Changing the number of logs needs a stopped node and a full copy of the data, `-relog-to` | Split and join logs in place |
 | KEYS, SCAN and DBSIZE outside MULTI are not a point-in-time snapshot | MVCC versions, or KEYS under an all-shard lock |
 | Merge checks every record's liveness with a separate shard lock | Batches grouped by shard |
 | WATCH fires spuriously after a merge moves a watched key, and while a watched key is missing, when another key of its shard is created or deleted | A version per key, at 8 more bytes of memory per key |

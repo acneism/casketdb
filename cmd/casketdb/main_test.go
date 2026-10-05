@@ -4,12 +4,16 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"flag"
+	"fmt"
 	"log/slog"
+	"maps"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/acneism/casketdb/internal/bitcask"
 	"github.com/acneism/casketdb/internal/testcert"
 )
 
@@ -87,5 +91,66 @@ func TestApplyEnv(t *testing.T) {
 	env["CASKETDB_RAFT_ELECTION_TIMEOUT"] = "soon"
 	if _, err := applyEnv(fresh, lookup); err == nil || !strings.Contains(err.Error(), "CASKETDB_RAFT_ELECTION_TIMEOUT") {
 		t.Fatalf("bad duration: %v", err)
+	}
+}
+
+func TestRelog(t *testing.T) {
+	src, dst := t.TempDir(), filepath.Join(t.TempDir(), "relogged")
+	opts := bitcask.DefaultOptions()
+	opts.Logs = 2
+	db, err := bitcask.Open(src, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ops := []bitcask.Op{{Key: "t", Value: []byte("gen00000"), Kind: 0x84}}
+	expireAt := time.Now().Add(time.Hour).UnixMilli()
+	for i := range 300 {
+		ops = append(ops, bitcask.Op{Key: fmt.Sprintf("k%d", i), Value: []byte("v"), ExpireAt: expireAt},
+			bitcask.Op{Key: "t", Member: fmt.Sprintf("f%d", i), IsMember: true, Value: []byte("m")})
+	}
+	if err := db.Apply(ops, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetSystem([]byte("users")); err != nil {
+		t.Fatal(err)
+	}
+	db.MarkApplied(42)
+	if err := db.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config{dir: src, relogTo: dst, opts: bitcask.DefaultOptions()}
+	cfg.opts.Logs = 8
+	logger := slog.New(slog.DiscardHandler)
+	if err := relog(logger, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := relog(logger, cfg); err == nil || !strings.Contains(err.Error(), "not empty") {
+		t.Fatalf("second copy into the same directory: %v", err)
+	}
+	dump := func(dir string) (map[string]string, *bitcask.DB) {
+		db, err := bitcask.Open(dir, bitcask.DefaultOptions())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { db.Close() })
+		m := map[string]string{}
+		if err := db.Dump(func(op bitcask.Op) error {
+			m[op.Key+"/"+op.Member] = fmt.Sprintf("%s %d %d", op.Value, op.ExpireAt, op.Kind)
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return m, db
+	}
+	before, _ := dump(src)
+	after, copied := dump(dst)
+	if len(before) != 601 || !maps.Equal(before, after) {
+		t.Fatalf("copied %d records, the source has %d", len(after), len(before))
+	}
+	if st := copied.Stats(); st.Logs != 8 || string(copied.System()) != "users" || copied.DurableIndex() != 42 {
+		t.Fatalf("copy has %d logs, system %q, durable index %d", st.Logs, copied.System(), copied.DurableIndex())
 	}
 }

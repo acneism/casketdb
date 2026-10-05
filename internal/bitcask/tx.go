@@ -302,6 +302,25 @@ func (db *DB) Dump(fn func(op Op) error) error {
 	return nil
 }
 
+func (db *DB) CopyTo(to *DB, batch int) error {
+	ops := make([]Op, 0, batch)
+	err := db.Dump(func(op Op) error {
+		if ops = append(ops, op); len(ops) < batch {
+			return nil
+		}
+		err := to.Apply(ops, 0)
+		ops = ops[:0]
+		return err
+	})
+	if err == nil {
+		err = to.Apply(ops, 0)
+	}
+	if err == nil {
+		err = to.SetSystem(db.System())
+	}
+	return err
+}
+
 func (tx *Tx) ops() ([]Op, []memberRef) {
 	ops := make([]Op, len(tx.order), len(tx.order)+len(tx.memberOrder))
 	for i, key := range tx.order {

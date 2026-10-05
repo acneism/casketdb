@@ -49,6 +49,7 @@ type config struct {
 	timeout     time.Duration
 	logLevel    string
 	logFormat   string
+	relogTo     string
 	opts        bitcask.Options
 }
 
@@ -66,6 +67,7 @@ func main() {
 	flag.Int64Var(&cfg.opts.MergeMinBytes, "merge-min-bytes", cfg.opts.MergeMinBytes, "minimum total size for automatic merge")
 	flag.DurationVar(&cfg.opts.MergeInterval, "merge-interval", cfg.opts.MergeInterval, "automatic merge check interval, 0 disables it")
 	flag.IntVar(&cfg.opts.Logs, "logs", 0, "number of parallel data logs for a new database (0 means 4; an existing database keeps its own)")
+	flag.StringVar(&cfg.relogTo, "relog-to", "", "copy the stopped database in -dir into this empty directory with -logs logs, then exit")
 	flag.IntVar(&cfg.maxBulk, "proto-max-bulk-len", 512<<20, "maximum bulk string length in bytes")
 	flag.StringVar(&cfg.requirePass, "requirepass", "", "password clients must AUTH with")
 	flag.BoolVar(&cfg.protected, "protected-mode", true, "while the default user has no password, refuse clients that connect from other hosts")
@@ -98,13 +100,51 @@ func main() {
 	if cfg.raftDir == "" {
 		cfg.raftDir = filepath.Join(cfg.dir, "raft")
 	}
-	if err == nil {
+	switch {
+	case err == nil && cfg.relogTo != "":
+		err = relog(logger, cfg)
+	case err == nil:
 		err = run(logger, cfg)
 	}
 	if err != nil {
 		logger.Error("fatal", "err", err)
 		os.Exit(1)
 	}
+}
+
+func relog(logger *slog.Logger, cfg config) error {
+	if _, err := os.Stat(cfg.dir); err != nil {
+		return err
+	}
+	if des, err := os.ReadDir(cfg.relogTo); err == nil && len(des) > 0 {
+		return fmt.Errorf("-relog-to %s is not empty", cfg.relogTo)
+	}
+	opts := cfg.opts
+	opts.Sync, opts.MergeInterval, opts.ExpireInterval = bitcask.SyncNo, 0, 0
+	src := opts
+	src.Logs = 0
+	from, err := bitcask.Open(cfg.dir, src)
+	if err != nil {
+		return err
+	}
+	defer from.Close()
+	to, err := bitcask.Open(cfg.relogTo, opts)
+	if err != nil {
+		return err
+	}
+	err = from.CopyTo(to, 1024)
+	if err == nil {
+		to.MarkApplied(from.DurableIndex())
+		err = to.Sync()
+	}
+	st := to.Stats()
+	if cerr := to.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		logger.Info("database copied", "from", cfg.dir, "to", cfg.relogTo, "keys", st.Keys, "logs", st.Logs)
+	}
+	return err
 }
 
 func run(logger *slog.Logger, cfg config) error {

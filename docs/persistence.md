@@ -73,6 +73,16 @@ Directories are created with mode `0700` and files with `0600`, readable only by
 
 The record format is described in [architecture](architecture.md#on-disk-format).
 
+### Changing the number of logs
+
+The number of logs is fixed when a database is created. To change it, stop the node and copy the database into an empty directory with the new number:
+
+```bash
+casketdb -dir data -logs 8 -relog-to data8
+```
+
+The copy keeps every key, its TTL and the users, and in a cluster the durable Raft index, so the node replays only the entries after it. Start the node with `-dir data8`; in a cluster, move `data/raft` into `data8` first or pass `-raft-dir data/raft`. The original directory is left as it was, so remove it once the node runs from the copy.
+
 ## Memory
 
 Memory holds the key index — about 80–100 bytes plus the key length per key — and a copy of each log's active data file, up to `-max-file-size` (64 MB by default) per log. Values are read from memory-mapped sealed files and the page cache.
