@@ -183,6 +183,33 @@ func (c *collection) each(values bool, fn func(field, value []byte)) error {
 	return nil
 }
 
+func (c *collection) random(count int64, values bool) ([][]byte, [][]byte, error) {
+	var fields, vals [][]byte
+	if !c.table || (count > 0 && count*2 >= int64(c.len())) {
+		var all, allValues [][]byte
+		if err := c.each(values, func(field, value []byte) {
+			all, allValues = append(all, field), append(allValues, value)
+		}); err != nil {
+			return nil, nil, err
+		}
+		for _, i := range randomPicks(len(all), count) {
+			fields, vals = append(fields, all[i]), append(vals, allValues[i])
+		}
+		return fields, vals, nil
+	}
+	picked := make(map[string]bool)
+	skip := func(member string) bool { return count > 0 && picked[member] }
+	for range max(count, -count) {
+		member, value, ok, err := c.tx.RandomMember(c.key, values, skip)
+		if err != nil || !ok {
+			return fields, vals, err
+		}
+		picked[member] = true
+		fields, vals = append(fields, []byte(member)), append(vals, value)
+	}
+	return fields, vals, nil
+}
+
 func (c *collection) meta() []byte {
 	return binary.AppendUvarint(binary.LittleEndian.AppendUint64(nil, c.gen), uint64(c.count))
 }

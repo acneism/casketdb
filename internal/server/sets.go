@@ -1,7 +1,6 @@
 package server
 
 import (
-	"math/rand/v2"
 	"slices"
 
 	"github.com/acneism/casketdb/internal/bitcask"
@@ -142,14 +141,12 @@ func cmdSPop(tx *bitcask.Tx, args [][]byte) (reply, error) {
 	if bad != nil || err != nil {
 		return bad, err
 	}
-	members, err := s.members()
+	popped, _, err := s.random(count, false)
 	if err != nil {
 		return nil, err
 	}
-	var popped [][]byte
-	for _, i := range randomPicks(len(members), count) {
-		s.del(members[i])
-		popped = append(popped, members[i])
+	for _, member := range popped {
+		s.del(member)
 	}
 	s.store()
 	if len(args) == 3 {
@@ -176,19 +173,22 @@ func cmdSRandMember(tx *bitcask.Tx, args [][]byte) (reply, error) {
 	if bad != nil || err != nil {
 		return bad, err
 	}
-	members, err := s.members()
+	if len(args) == 2 {
+		count = 1
+	}
+	picked, _, err := s.random(count, false)
 	if err != nil {
 		return nil, err
 	}
 	if len(args) == 2 {
-		if len(members) == 0 {
+		if len(picked) == 0 {
 			return nilReply, nil
 		}
-		return bulkReply(members[rand.IntN(len(members))]), nil
+		return bulkReply(picked[0]), nil
 	}
 	out := arrayReply{}
-	for _, i := range randomPicks(len(members), count) {
-		out = append(out, bulkReply(members[i]))
+	for _, member := range picked {
+		out = append(out, bulkReply(member))
 	}
 	return out, nil
 }

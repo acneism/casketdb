@@ -2,6 +2,12 @@
 
 Versions are listed newest first. CasketDB was called BitKV up to and including v0.9.
 
+## Unreleased
+
+### Fixed
+
+- SPOP, SRANDMEMBER, HRANDFIELD and ZRANDMEMBER read every member of a large collection on each call: SPOP on a set of 95,000 members ran 31 times a second. They now pick among 16 members near a random place in the member table, as Redis does, and the same test runs about 25,000 SPOPs a second. See [random members](docs/commands.md#random-members).
+
 ## v0.15 — 2026-10-06
 
 ### Added

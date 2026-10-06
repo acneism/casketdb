@@ -1317,6 +1317,64 @@ func TestProposedMembers(t *testing.T) {
 	}
 }
 
+func TestRandomMember(t *testing.T) {
+	db := mustOpen(t, t.TempDir(), testOptions())
+	defer mustClose(t, db)
+	if err := db.Update(Keys("r", "s"), func(tx *Tx) error {
+		tx.PutKind("r", Table|4, tableValue(5), 0)
+		for i := range 200 {
+			tx.PutMember("r", fmt.Sprint(i), []byte(fmt.Sprint("v", i)))
+		}
+		tx.Put("s", []byte("string"), 0)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	picked := map[string]int{}
+	for range 4000 {
+		if err := db.View(Keys("r"), func(tx *Tx) error {
+			m, v, ok, err := tx.RandomMember("r", true, nil)
+			if err != nil || !ok || string(v) != "v"+m {
+				t.Fatalf("RandomMember = %q, %q, %v, %v", m, v, ok, err)
+			}
+			picked[m]++
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(picked) != 200 || slices.Max(slices.Collect(maps.Values(picked))) >= 70 {
+		t.Fatalf("4000 picks of 200 members: %d distinct, counts %v", len(picked), picked)
+	}
+	if err := db.Update(Keys("r", "s", "missing"), func(tx *Tx) error {
+		for i := range 200 {
+			if i != 7 {
+				tx.DeleteMember("r", fmt.Sprint(i))
+			}
+		}
+		tx.PutMember("r", "new", []byte("n"))
+		for range 20 {
+			if m, _, ok, err := tx.RandomMember("r", false, nil); m != "7" || !ok || err != nil {
+				t.Fatalf("RandomMember with pending deletes = %q, %v, %v", m, ok, err)
+			}
+		}
+		if m, v, ok, err := tx.RandomMember("r", true, func(m string) bool { return m == "7" }); m != "new" || string(v) != "n" || !ok || err != nil {
+			t.Fatalf("RandomMember skipping 7 = %q, %q, %v, %v", m, v, ok, err)
+		}
+		if _, _, ok, err := tx.RandomMember("r", false, func(string) bool { return true }); ok || err != nil {
+			t.Fatalf("RandomMember skipping all = %v, %v", ok, err)
+		}
+		for _, key := range []string{"s", "missing"} {
+			if _, _, ok, err := tx.RandomMember(key, false, nil); ok || err != nil {
+				t.Fatalf("RandomMember(%q) = %v, %v", key, ok, err)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSystemState(t *testing.T) {
 	dir := t.TempDir()
 	db := mustOpen(t, dir, testOptions())

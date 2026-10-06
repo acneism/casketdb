@@ -148,3 +148,65 @@ func TestSetModel(t *testing.T) {
 		}
 	}
 }
+
+func TestRandomOnTables(t *testing.T) {
+	srv, db, addr := startServer(t, t.TempDir())
+	defer stopServer(t, srv, db)
+	c := dial(t, addr)
+	sadd, hset, zadd := []string{"SADD", "s"}, []string{"HSET", "h"}, []string{"ZADD", "z"}
+	for i := range 300 {
+		sadd = append(sadd, fmt.Sprint("m", i))
+		hset = append(hset, fmt.Sprint("f", i), fmt.Sprint(i))
+		zadd = append(zadd, fmt.Sprint(i), fmt.Sprint("z", i))
+	}
+	c.expect(int64(300), sadd...)
+	c.expect(int64(300), hset...)
+	c.expect(int64(300), zadd...)
+	c.expect("hashtable", "OBJECT", "ENCODING", "s")
+
+	popped := members(t, c, "SPOP", "s", "10")
+	if m, ok := c.do("SPOP", "s").(string); ok {
+		popped = append(popped, m)
+	}
+	if len(slices.Compact(slices.Sorted(slices.Values(popped)))) != 11 {
+		t.Fatalf("SPOP returned %v, want 11 distinct members", popped)
+	}
+	c.expect(int64(289), "SCARD", "s")
+	for _, m := range popped {
+		c.expect(int64(0), "SISMEMBER", "s", m)
+	}
+	picked := members(t, c, "SRANDMEMBER", "s", "20")
+	if len(slices.Compact(picked)) != 20 {
+		t.Fatalf("SRANDMEMBER s 20 = %v, want 20 distinct members", picked)
+	}
+	for _, m := range picked {
+		c.expect(int64(1), "SISMEMBER", "s", m)
+	}
+	if got, _ := c.do("SRANDMEMBER", "s", "-500").([]any); len(got) != 500 {
+		t.Fatalf("SRANDMEMBER s -500 returned %d members", len(got))
+	}
+	pairs, _ := c.do("HRANDFIELD", "h", "10", "WITHVALUES").([]any)
+	for i := 0; i+1 < len(pairs); i += 2 {
+		if pairs[i] != "f"+pairs[i+1].(string) {
+			t.Fatalf("HRANDFIELD pair %v, %v", pairs[i], pairs[i+1])
+		}
+	}
+	scored, _ := c.do("ZRANDMEMBER", "z", "-10", "WITHSCORES").([]any)
+	for i := 0; i+1 < len(scored); i += 2 {
+		if scored[i] != "z"+scored[i+1].(string) {
+			t.Fatalf("ZRANDMEMBER pair %v, %v", scored[i], scored[i+1])
+		}
+	}
+	if len(pairs) != 20 || len(scored) != 20 {
+		t.Fatalf("HRANDFIELD returned %d items, ZRANDMEMBER %d, want 20 each", len(pairs), len(scored))
+	}
+
+	c.expect(status("OK"), "MULTI")
+	c.expect(status("QUEUED"), "SADD", "s", "fresh")
+	c.expect(status("QUEUED"), "SPOP", "s", "3")
+	c.expect(status("QUEUED"), "SCARD", "s")
+	got, _ := c.do("EXEC").([]any)
+	if len(got) != 3 || len(got[1].([]any)) != 3 || got[2] != int64(287) {
+		t.Fatalf("EXEC = %v", got)
+	}
+}

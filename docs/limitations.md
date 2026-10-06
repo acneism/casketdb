@@ -15,7 +15,7 @@ These are deliberate choices, not missing features:
 | Limitation | Possible fix |
 | --- | --- |
 | All keys must fit in RAM: about 80–100 bytes plus the key length per key | Inherent to Bitcask; a disk-based index would be a different engine |
-| HSCAN, SSCAN and ZSCAN return a whole collection in one reply; HRANDFIELD, SPOP, SRANDMEMBER and ZRANDMEMBER read every member | A cursor and random access over the member table of a large collection |
+| HSCAN, SSCAN and ZSCAN return a whole collection in one reply | A cursor over the member table of a large collection |
 | The start of a database reads every member of a large sorted set, one read per member | Keep the score of such members in hint files |
 | A stream entry costs about as much memory as a key | Pack entries into records of up to 100, as Redis packs them into nodes |
 | The fields of a large hash and the members of a large set, like keys, must fit in RAM | Inherent to Bitcask, see the first row |

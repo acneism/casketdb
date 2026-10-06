@@ -3,6 +3,7 @@ package bitcask
 import (
 	"cmp"
 	"errors"
+	"math/rand/v2"
 	"slices"
 )
 
@@ -465,19 +466,7 @@ func (tx *Tx) Members(key string, values bool, fn func(member string, value []by
 	if s == nil {
 		return ErrNotLocked
 	}
-	extra := make(map[string]bool)
-	for r := range tx.pendingMembers {
-		if r.key == key && r.gen == gen {
-			extra[r.member] = true
-		}
-	}
-	if tx.term != 0 {
-		for r, op := range s.proposedMembers {
-			if r.key == key && r.gen == gen && op.term == tx.term {
-				extra[r.member] = true
-			}
-		}
-	}
+	extra := tx.extraMembers(s, key, gen)
 	visit := func(member string) (bool, error) {
 		r := memberRef{key, gen, member}
 		if !values {
@@ -504,6 +493,75 @@ func (tx *Tx) Members(key string, values bool, fn func(member string, value []by
 		}
 	}
 	return nil
+}
+
+func (tx *Tx) extraMembers(s *shard, key string, gen uint64) map[string]bool {
+	extra := make(map[string]bool)
+	for r := range tx.pendingMembers {
+		if r.key == key && r.gen == gen {
+			extra[r.member] = true
+		}
+	}
+	if tx.term != 0 {
+		for r, op := range s.proposedMembers {
+			if r.key == key && r.gen == gen && op.term == tx.term {
+				extra[r.member] = true
+			}
+		}
+	}
+	return extra
+}
+
+const randomSpan = 16
+
+func (tx *Tx) RandomMember(key string, values bool, skip func(member string) bool) (string, []byte, bool, error) {
+	gen, ok, err := tx.gen(key)
+	if err != nil || !ok {
+		return "", nil, false, err
+	}
+	i, s := tx.shardFor(key)
+	if s == nil {
+		return "", nil, false, ErrNotLocked
+	}
+	present := func(member string) bool {
+		if skip != nil && skip(member) {
+			return false
+		}
+		_, _, found := tx.lookupMember(s, memberRef{key, gen, member})
+		return found
+	}
+	var picks []string
+	t := s.tables[key]
+	if t != nil && t.gen == gen {
+		for member := range t.members {
+			if present(member) {
+				if picks = append(picks, member); len(picks) == randomSpan {
+					break
+				}
+			}
+		}
+	}
+	if len(picks) == 0 {
+		for member := range tx.extraMembers(s, key, gen) {
+			if t != nil && t.gen == gen {
+				if _, committed := t.members[member]; committed {
+					continue
+				}
+			}
+			if present(member) {
+				picks = append(picks, member)
+			}
+		}
+	}
+	if len(picks) == 0 {
+		return "", nil, false, nil
+	}
+	member := picks[rand.IntN(len(picks))]
+	if !values {
+		return member, nil, true, nil
+	}
+	v, found, err := tx.readMember(i, s, memberRef{key, gen, member})
+	return member, v, found, err
 }
 
 func (tx *Tx) orderedMembers(key string) (*orderedView, error) {

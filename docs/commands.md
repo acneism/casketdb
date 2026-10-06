@@ -43,12 +43,12 @@ A hash has the two encodings of Redis, but changes encoding at 128 fields, where
 Differences from Redis:
 
 - HSCAN returns every matching field in one reply with cursor `0`, for both encodings, and accepts `NOVALUES`. COUNT is checked but does not split the reply.
-- HRANDFIELD reads every field of the hash, and with a count accepts at most 16,777,216 fields either way; Redis has no such limit.
+- HRANDFIELD with a count accepts at most 16,777,216 fields either way; Redis has no such limit. See [random members](#random-members) for how it picks.
 - Field expiry (HEXPIRE and the other commands of Redis 7.4) is not supported.
 
 ### Sets
 
-A set uses the same two encodings as a hash, with the same thresholds: up to 128 members of up to 64 bytes it is one value (`listpack`), beyond that each member is a record of its own (`hashtable`). There is no `intset` encoding for small sets of integers. SSCAN returns every matching member in one reply with cursor `0`; SPOP and SRANDMEMBER read every member of the set, and SRANDMEMBER with a count accepts at most 16,777,216 members either way.
+A set uses the same two encodings as a hash, with the same thresholds: up to 128 members of up to 64 bytes it is one value (`listpack`), beyond that each member is a record of its own (`hashtable`). There is no `intset` encoding for small sets of integers. SSCAN returns every matching member in one reply with cursor `0`. SRANDMEMBER with a count accepts at most 16,777,216 members either way. See [random members](#random-members) for how SPOP and SRANDMEMBER pick.
 
 ### Lists
 
@@ -61,9 +61,13 @@ Up to 128 members of up to 64 bytes a sorted set is one value (`listpack`), sort
 Differences from Redis:
 
 - Scores are 64-bit floats, as in Redis, and replies give the shortest decimal form that reads back as the same number, as Redis 7.2 and later do: `0.1`, `1e-05`, `1e+20`. A score of `-0` is stored as `0`.
-- ZSCAN returns every matching member in one reply with cursor `0`. ZRANDMEMBER reads every member of the set, and with a count accepts at most 16,777,216 members either way.
+- ZSCAN returns every matching member in one reply with cursor `0`. ZRANDMEMBER with a count accepts at most 16,777,216 members either way. See [random members](#random-members) for how it picks.
 
 ZUNION, ZINTER, ZDIFF, ZINTERCARD and their STORE forms accept sets as inputs, with a score of 1 for each member, as Redis does.
+
+### Random members
+
+SPOP, SRANDMEMBER, HRANDFIELD and ZRANDMEMBER pick from a large collection (`hashtable` or `skiplist`) the way Redis does. They take a random place in the member table, look at the next 16 members, and pick one of those. A pick costs the same at any size, and members come out close to equally often, though not exactly. A count of half the collection or more reads every member and shuffles them. A negative count picks each member independently. A small collection is always read whole.
 
 ### HyperLogLog
 

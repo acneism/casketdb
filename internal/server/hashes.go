@@ -2,7 +2,6 @@ package server
 
 import (
 	"math"
-	"math/rand/v2"
 	"strconv"
 
 	"github.com/acneism/casketdb/internal/bitcask"
@@ -337,21 +336,22 @@ func randomMembers(tx *bitcask.Tx, args [][]byte, option string, open func(*bitc
 	if bad != nil || err != nil {
 		return bad, err
 	}
-	var fields, values [][]byte
-	if err := c.each(len(args) == 4, func(field, value []byte) {
-		fields, values = append(fields, field), append(values, value)
-	}); err != nil {
+	if len(args) == 2 {
+		count = 1
+	}
+	fields, values, err := c.random(count, len(args) == 4)
+	if err != nil {
 		return nil, err
 	}
 	if len(args) == 2 {
 		if len(fields) == 0 {
 			return nilReply, nil
 		}
-		return bulkReply(fields[rand.IntN(len(fields))]), nil
+		return bulkReply(fields[0]), nil
 	}
 	out := arrayReply{}
-	for _, i := range randomPicks(len(fields), count) {
-		out = append(out, bulkReply(fields[i]))
+	for i, field := range fields {
+		out = append(out, bulkReply(field))
 		if len(args) == 4 {
 			out = append(out, format(values[i]))
 		}
