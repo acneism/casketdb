@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -817,8 +818,7 @@ func TestMultiShardTransactionsUnderContention(t *testing.T) {
 	all := append(slices.Clone(keys), "total")
 	value := func(tx *Tx, key string) int {
 		v, _, _ := tx.Get(key)
-		n := 0
-		fmt.Sscan(string(v), &n)
+		n, _ := strconv.Atoi(string(v))
 		return n
 	}
 	inParallel(t, 16, func(g int) error {
