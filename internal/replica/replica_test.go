@@ -280,6 +280,15 @@ func compact(t *testing.T, nodes []*testNode, l *testNode, prefix string) {
 	eventually(t, "the leader to compact its log", func() bool { return l.node.Status().FirstIndex+4 > durable }, clusterState(nodes))
 }
 
+func stopFollower(t *testing.T, nodes []*testNode, l, f *testNode) {
+	t.Helper()
+	f.stop(t)
+	must(t, put(l, "stopped", f.id))
+	eventually(t, "the leader to notice that "+f.id+" stopped", func() bool {
+		return l.node.rn.Status().Progress[raft.NodeID(f.id)].State != raft.ProgressReplicate
+	}, clusterState(nodes))
+}
+
 func copyDir(t *testing.T, from, to string) {
 	t.Helper()
 	must(t, filepath.WalkDir(from, func(path string, d os.DirEntry, err error) error {
@@ -441,8 +450,9 @@ func TestHotKeyFailover(t *testing.T) {
 		}()
 	}
 	time.Sleep(300 * time.Millisecond)
-	l.stop(t)
+	must(t, l.node.Close())
 	wg.Wait()
+	l.stop(t)
 	next := leader(t, nodes)
 	var got int64
 	eventually(t, "survivors to agree", func() bool {
@@ -673,7 +683,7 @@ func TestSystemStateReplicates(t *testing.T) {
 		}
 		return true
 	})
-	f.stop(t)
+	stopFollower(t, nodes, l, f)
 	must(t, l.node.SetSystem([]byte("v2")))
 	for i := range 60 {
 		must(t, put(l, "k"+strconv.Itoa(i), "v"))
@@ -691,13 +701,13 @@ func TestLaggingFollowerCatchesUpBySnapshot(t *testing.T) {
 	nodes := newCluster(t, 3, false)
 	l := leader(t, nodes)
 	f := follower(nodes, l)
-	f.stop(t)
+	stopFollower(t, nodes, l, f)
 	for i := range 60 {
 		must(t, put(l, "k"+strconv.Itoa(i), "v"))
 	}
 	compact(t, nodes, l, "fill")
 	f.start(t)
-	eventually(t, "lagging follower to catch up", converged(nodes, "fill19", "v", 80), clusterState(nodes))
+	eventually(t, "lagging follower to catch up", converged(nodes, "fill19", "v", 81), clusterState(nodes))
 	eventually(t, "the lagging follower to install a snapshot", func() bool {
 		_, _, ok := latestSnapshot(f)
 		return ok
