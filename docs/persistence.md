@@ -22,7 +22,7 @@ In a cluster, durability of acknowledged writes comes from the Raft log, which i
 2. The group-commit leader of each log writes the whole queue with one write call. Until then, readers see the new values from memory.
 3. The client gets its reply after its batch is written, so it survives `kill -9`. With `always`, the reply also waits for the fsync.
 
-A batch in one log is atomic: a batch cut off by a crash is dropped on the next start. A batch that touches keys in several logs uses two-phase commit: its parts are written to every log first, then a commit record to each. Its locks are held until all commit records are written, so nobody reads a half-committed batch.
+A batch in one log is atomic: a batch cut off by a crash is dropped on the next start. A batch that touches keys in several logs uses two-phase commit: its parts are written to every log first, then a commit record to each. Its locks are held until all commit records are written, so nobody reads a half-committed batch. A pipeline of commands that each touch one key, such as SET or LPUSH, is the exception. Its parts in different logs commit on their own, as separate commands would, so a crash can keep some of its commands and lose others. MULTI/EXEC and commands with several keys stay atomic.
 
 A write or fsync error is sticky. The database switches to a failed state and rejects all writes; it does not retry the fsync, because after a failed fsync the page cache can no longer be trusted. Restart the server after fixing the disk.
 

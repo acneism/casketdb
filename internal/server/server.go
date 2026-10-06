@@ -325,12 +325,19 @@ func (s *Server) runBatch(c *client, batch []queued) {
 	defer s.recoverCommand(c, batch[0].args[0])
 	c.caching = 0
 	var keys []string
+	single := true
 	for _, q := range batch {
+		n := len(keys)
 		keys = q.cmd.keys.extract(q.args, keys)
+		single = single && len(keys)-n <= 1
+	}
+	scope := bitcask.Keys(keys...)
+	if single {
+		scope = scope.Independent()
 	}
 	var replies arrayReply
 	start := s.clock()
-	err := s.update(bitcask.Keys(keys...), func(tx *bitcask.Tx) (err error) {
+	err := s.update(scope, func(tx *bitcask.Tx) (err error) {
 		replies, err = runQueue(tx, batch)
 		return err
 	})

@@ -117,6 +117,36 @@ func TestCrossLogBatchRollsBackWhenPartIsMissing(t *testing.T) {
 	expect(t, db, b, "old")
 }
 
+func TestIndependentPartsWriteNoCommitRecords(t *testing.T) {
+	dir := t.TempDir()
+	o := multiOptions(4)
+	a, b := keyInLog(4, 0, "a"), keyInLog(4, 1, "b")
+	db := mustOpen(t, dir, o)
+	defer mustClose(t, db)
+	size := func(log int) int64 {
+		st, err := os.Stat(lastFileOfLog(t, dir, log))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st.Size()
+	}
+	before := []int64{size(0), size(1)}
+	if err := db.Update(Keys(a, b).Independent(), func(tx *Tx) error {
+		tx.Put(a, []byte("new"), 0)
+		tx.Put(b, []byte("new"), 0)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for log, key := range []string{a, b} {
+		if grew, want := size(log)-before[log], recordSize(len(key), 3); grew != want {
+			t.Errorf("log %d grew by %d bytes, want one record of %d", log, grew, want)
+		}
+	}
+	expect(t, db, a, "new")
+	expect(t, db, b, "new")
+}
+
 func TestCrossLogRollbackRemovesCreatedKeys(t *testing.T) {
 	dir := t.TempDir()
 	o := multiOptions(4)

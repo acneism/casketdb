@@ -4,6 +4,12 @@ Versions are listed newest first. CasketDB was called BitKV up to and including 
 
 ## Unreleased
 
+### Changed
+
+- A pipeline of commands that each touch one key, such as SET or LPUSH, no longer commits across logs in two phases. Each log's part commits on its own, and the shard locks are released before the write instead of after it. Such a pipeline is not atomic across a crash, as in Redis; MULTI/EXEC and commands with several keys still are. See [how a write reaches disk](docs/persistence.md#how-a-write-reaches-disk).
+- A transaction over several shards no longer waits for a busy shard while it holds the others. It releases them, waits for that shard, and tries again; after four rounds it falls back to locking in order.
+- Together, on four clients pipelining SET, these changes raised throughput by 10–30% and cut the 99th percentile latency from about 0.5 s to about 70 ms on the benchmark machine. At full load the median rose from about 3 ms to 8 ms, as the wait is now shared out evenly instead of falling on a few unlucky batches.
+
 ### Fixed
 
 - SPOP, SRANDMEMBER, HRANDFIELD and ZRANDMEMBER read every member of a large collection on each call: SPOP on a set of 95,000 members ran 31 times a second. They now pick among 16 members near a random place in the member table, as Redis does, and the same test runs about 25,000 SPOPs a second. See [random members](docs/commands.md#random-members).

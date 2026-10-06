@@ -27,7 +27,7 @@ Every command, and every EXEC, is one transaction. A transaction declares its sc
 - `All()` locks every shard;
 - `Shardwise()` is read-only and locks one shard at a time, for SCAN and DBSIZE outside MULTI.
 
-Touching a key outside the scope fails with `ErrNotLocked`. Shards are locked in ascending order, so transactions cannot deadlock. The server takes a command's keys from its key specification, as Redis does: first, last and step (GET is 1,1,1; MGET is 1,−1,1; MSET is 1,−1,2). EXEC locks the union of the queued keys and the watched keys.
+Touching a key outside the scope fails with `ErrNotLocked`. A transaction tries the locks of its shards in ascending order without waiting. If a shard is busy, it releases the shards it holds, waits for that one, and tries the rest again. This keeps transactions from queueing behind one another in long chains. After four such rounds it locks the shards in ascending order and waits, which cannot deadlock. The server takes a command's keys from its key specification, as Redis does: first, last and step (GET is 1,1,1; MGET is 1,−1,1; MSET is 1,−1,2). EXEC locks the union of the queued keys and the watched keys.
 
 Lock order: log `mergeMu` → shards → `txGate` → log `logMu` → `filesMu` → `wmu`; the queue mutex and the overlay are leaves.
 
@@ -38,6 +38,8 @@ Data is written to N independent logs, 4 by default. Shard i belongs to log i mo
 Each log has its own active file, write queue, group-commit leader, fsync and merge. A commit only reserves space under the tiny `logMu`, updates the key index and queues the batch. One waiting writer becomes the group-commit leader and writes the whole queue with one `WriteAt`, outside every data lock. This avoids a convoy on Windows, where `FlushFileBuffers` blocks a concurrent `WriteFile`.
 
 A batch that touches several logs uses two-phase commit. Each part starts with a header carrying a transaction id and the number of parts; after all parts are written, a commit record with the same id goes to every involved log. The transaction holds `txGate` for reading and its shard locks until all commit records are written. Recovery keeps a batch if any log has its commit record and rolls it back otherwise.
+
+A pipelined batch of commands that each touch one key skips the two-phase commit. Its part in each log commits on its own, as separate commands would, and its shard locks are released before the parts are written. Redis does not make a pipeline atomic either. MULTI/EXEC and commands with several keys keep the two-phase commit.
 
 ## Reads
 

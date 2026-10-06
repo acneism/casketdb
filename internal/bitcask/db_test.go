@@ -807,6 +807,52 @@ func TestConcurrentReadModifyWrite(t *testing.T) {
 	}
 }
 
+func TestMultiShardTransactionsUnderContention(t *testing.T) {
+	db := mustOpen(t, t.TempDir(), testOptions())
+	defer mustClose(t, db)
+	keys := make([]string, 16)
+	for i := range keys {
+		keys[i] = fmt.Sprint("c", i)
+	}
+	all := append(slices.Clone(keys), "total")
+	value := func(tx *Tx, key string) int {
+		v, _, _ := tx.Get(key)
+		n := 0
+		fmt.Sscan(string(v), &n)
+		return n
+	}
+	inParallel(t, 16, func(g int) error {
+		rng := rand.New(rand.NewPCG(uint64(g), 1))
+		for range 300 {
+			a, b := keys[rng.IntN(len(keys))], keys[rng.IntN(len(keys))]
+			if err := db.Update(Keys(a, b, "total"), func(tx *Tx) error {
+				for _, key := range []string{a, b, "total", "total"} {
+					if err := increment(tx, key); err != nil {
+						return err
+					}
+				}
+				return nil
+			}); err != nil {
+				return err
+			}
+			if err := db.View(Keys(all...), func(tx *Tx) error {
+				sum := 0
+				for _, key := range keys {
+					sum += value(tx, key)
+				}
+				if total := value(tx, "total"); sum != total {
+					return fmt.Errorf("a reader saw counters summing to %d and a total of %d", sum, total)
+				}
+				return nil
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	expect(t, db, "total", "9600")
+}
+
 func TestGroupCommitSharesFsyncs(t *testing.T) {
 	o := testOptions()
 	o.Sync = SyncAlways

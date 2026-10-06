@@ -10,13 +10,19 @@ import (
 var ErrNotLocked = errors.New("bitcask: key outside of the transaction scope")
 
 type Scope struct {
-	keys      []string
-	all       bool
-	shardwise bool
+	keys        []string
+	all         bool
+	shardwise   bool
+	independent bool
 }
 
 func Keys(keys ...string) Scope {
 	return Scope{keys: keys}
+}
+
+func (s Scope) Independent() Scope {
+	s.independent = true
+	return s
 }
 
 func All() Scope {
@@ -52,25 +58,26 @@ type Version struct {
 }
 
 type Tx struct {
-	db        *DB
-	writable  bool
-	now       int64
-	all       bool
-	shardwise bool
-	shards    []int
-	shardBuf  [4]int
-	pending   map[string]pendingOp
-	term      uint64
-	depends   uint64
-	order     []string
-	err       error
+	db          *DB
+	writable    bool
+	now         int64
+	all         bool
+	shardwise   bool
+	independent bool
+	shards      []int
+	shardBuf    [4]int
+	pending     map[string]pendingOp
+	term        uint64
+	depends     uint64
+	order       []string
+	err         error
 
 	pendingMembers map[memberRef]pendingOp
 	memberOrder    []memberRef
 }
 
 func (db *DB) begin(scope Scope, writable bool) *Tx {
-	tx := &Tx{db: db, writable: writable, all: scope.all, shardwise: scope.shardwise && !writable}
+	tx := &Tx{db: db, writable: writable, all: scope.all, shardwise: scope.shardwise && !writable, independent: scope.independent}
 	switch {
 	case tx.all:
 		for i := range db.kd.shards {
@@ -84,12 +91,48 @@ func (db *DB) begin(scope Scope, writable bool) *Tx {
 		}
 		slices.Sort(tx.shards)
 		tx.shards = slices.Compact(tx.shards)
-		for _, i := range tx.shards {
-			tx.lock(i)
-		}
+		tx.lockShards()
 	}
 	tx.now = db.nowMs()
 	return tx
+}
+
+const lockRounds = 4
+
+func (tx *Tx) lockShards() {
+	held := -1
+	for range lockRounds {
+		failed := -1
+		for k, i := range tx.shards {
+			if i == held || tx.tryLock(i) {
+				continue
+			}
+			failed = i
+			for _, j := range tx.shards[:k] {
+				tx.unlock(j)
+			}
+			if held > i {
+				tx.unlock(held)
+			}
+			break
+		}
+		if failed < 0 {
+			return
+		}
+		tx.lock(failed)
+		held = failed
+	}
+	tx.unlock(held)
+	for _, i := range tx.shards {
+		tx.lock(i)
+	}
+}
+
+func (tx *Tx) tryLock(i int) bool {
+	if tx.writable {
+		return tx.db.kd.shards[i].mu.TryLock()
+	}
+	return tx.db.kd.shards[i].mu.TryRLock()
 }
 
 func (tx *Tx) lock(i int) {
@@ -923,8 +966,10 @@ func (tx *Tx) commit() ([]waitPoint, error) {
 		gb.keys = append(gb.keys, key)
 	}
 	for _, r := range tx.liveMembers() {
-		if _, stored := db.kd.shard(r.key).member(r); tx.pendingMembers[r].deleted && !stored {
-			continue
+		if tx.pendingMembers[r].deleted {
+			if _, stored := db.kd.shard(r.key).member(r); !stored {
+				continue
+			}
 		}
 		gb := part(r.key)
 		gb.members = append(gb.members, r)
@@ -932,7 +977,7 @@ func (tx *Tx) commit() ([]waitPoint, error) {
 	if len(parts) == 0 {
 		return nil, nil
 	}
-	cross := len(parts) > 1
+	cross := len(parts) > 1 && !tx.independent
 	var txid uint64
 	if cross {
 		txid = db.nextTxID()
