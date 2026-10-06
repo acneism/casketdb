@@ -38,6 +38,7 @@ func TestReplicaErrorsUseRedisCodes(t *testing.T) {
 	for err, prefix := range map[error]string{
 		replica.ErrNotLeader:   "READONLY ",
 		replica.ErrUnconfirmed: "TRYAGAIN ",
+		replica.ErrRemoved:     "ERR this node was removed",
 		errors.New("disk"):     "ERR ",
 	} {
 		if got := string(storageError(fmt.Errorf("op: %w", err))); !strings.HasPrefix(got, prefix) {

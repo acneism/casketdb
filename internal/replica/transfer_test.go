@@ -60,8 +60,8 @@ func TestTransferLeadershipErrors(t *testing.T) {
 		t.Fatalf("transfer to an unknown node: %v", err)
 	}
 	f.stop(t)
-	if err := l.node.TransferLeadership(f.id); !errors.Is(err, ErrTransferFailed) {
-		t.Fatalf("transfer to a stopped node: %v, want ErrTransferFailed", err)
+	if err := l.node.TransferLeadership(f.id); !errors.Is(err, ErrTransferFailed) || !strings.Contains(err.Error(), f.id+" did not") {
+		t.Fatalf("transfer to a stopped node: %v, want ErrTransferFailed saying why", err)
 	}
 	if leaderOf(nodes) != l {
 		t.Fatal("the leader lost its leadership after a failed transfer")

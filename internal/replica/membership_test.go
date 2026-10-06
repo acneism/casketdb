@@ -134,6 +134,16 @@ func TestLeaderRemovesItself(t *testing.T) {
 		next = leaderOf(nodes)
 		return next != nil && next != l
 	})
+	eventually(t, "the removed node to stop", func() bool { return errors.Is(l.node.Err(), ErrRemoved) })
+	if err := put(l, "x", "y"); !errors.Is(err, ErrRemoved) {
+		t.Fatalf("write on a removed node: %v, want ErrRemoved", err)
+	}
+	if err := l.node.ReadBarrier(); !errors.Is(err, ErrRemoved) {
+		t.Fatalf("read barrier on a removed node: %v, want ErrRemoved", err)
+	}
+	if st := l.node.Status(); st.Membership != "removed" {
+		t.Fatalf("status of a removed node: %+v", st)
+	}
 	l.stop(t)
 	must(t, put(next, "after", "remove"))
 	eventually(t, "replication", converged(nodes, "after", "remove", 2))

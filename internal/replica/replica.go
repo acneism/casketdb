@@ -29,6 +29,7 @@ var (
 	ErrTransferFailed = errors.New("replica: leadership transfer failed")
 	ErrChangePending  = errors.New("replica: another membership change is in progress, retry")
 	ErrChangeUnknown  = errors.New("replica: the membership change was interrupted and may or may not be applied, check RAFT MEMBERS")
+	ErrRemoved        = node.ErrRemoved
 )
 
 type ReadMode int
@@ -97,6 +98,8 @@ type Node struct {
 
 	reads    ReadMode
 	election time.Duration
+	logger   *slog.Logger
+	stopped  atomic.Pointer[error]
 
 	wg sync.WaitGroup
 }
@@ -181,7 +184,7 @@ func open(db *bitcask.DB, cfg Config, tune func(*node.Config)) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	n := &Node{db: db, id: nc.ID, rn: rn, fsm: fsm, reads: cfg.Reads, election: time.Duration(nc.ElectionTicks) * nc.TickInterval}
+	n := &Node{db: db, id: nc.ID, rn: rn, fsm: fsm, reads: cfg.Reads, election: time.Duration(nc.ElectionTicks) * nc.TickInterval, logger: logger}
 	n.wg.Add(1)
 	go n.watch()
 	return n, nil
@@ -199,6 +202,20 @@ func (n *Node) watch() {
 			(*fn)()
 		}
 	}
+	n.ready.Store(0)
+	if err := n.rn.Err(); err != nil {
+		n.stopped.Store(&err)
+		if errors.Is(err, ErrRemoved) {
+			n.logger.Error("this node was removed from the cluster: stop it and delete its directories")
+		}
+	}
+}
+
+func (n *Node) Err() error {
+	if err := n.stopped.Load(); err != nil {
+		return *err
+	}
+	return nil
 }
 
 func (n *Node) WatchLeadership(fn func()) {
@@ -245,6 +262,9 @@ func (n *Node) propose(term uint64, data []byte) (node.Proposal, error) {
 }
 
 func (n *Node) Update(scope bitcask.Scope, fn func(tx *bitcask.Tx) error) error {
+	if err := n.Err(); err != nil {
+		return err
+	}
 	n.flushMu.RLock()
 	defer n.flushMu.RUnlock()
 	term := n.ready.Load()
@@ -298,6 +318,9 @@ func (n *Node) wait(p node.Proposal) error {
 }
 
 func (n *Node) ReadBarrier() error {
+	if err := n.Err(); err != nil {
+		return err
+	}
 	if n.reads == ReadLocal {
 		return nil
 	}
@@ -339,7 +362,8 @@ func (n *Node) TransferLeadership(to string) error {
 		case errors.Is(err, raft.ErrTransferTarget):
 			return fmt.Errorf("replica: %q is not a voter of the cluster", id)
 		}
-		err = ErrTransferFailed
+		reason := strings.TrimPrefix(err.Error(), node.ErrTransferFailed.Error()+": ")
+		err = fmt.Errorf("%w: %s", ErrTransferFailed, strings.Replace(reason, "the target", string(id), 1))
 	}
 	return err
 }
@@ -349,6 +373,8 @@ func (n *Node) Status() Status {
 	cs := n.rn.ConfState()
 	membership := "none"
 	switch {
+	case errors.Is(n.Err(), ErrRemoved):
+		membership = "removed"
 	case slices.Contains(cs.Voters, n.id):
 		membership = "voter"
 	case slices.Contains(cs.Learners, n.id):

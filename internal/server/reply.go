@@ -128,6 +128,8 @@ func storageError(err error) errorReply {
 		return errorReply("READONLY You can't write against a read only replica.")
 	case errors.Is(err, replica.ErrUnconfirmed):
 		return errorReply("TRYAGAIN No leader confirmed the read, retry.")
+	case errors.Is(err, replica.ErrRemoved):
+		return errorReply("ERR this node was removed from the cluster")
 	}
 	return errorReply("ERR " + err.Error())
 }

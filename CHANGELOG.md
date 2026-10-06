@@ -8,6 +8,9 @@ Versions are listed newest first. CasketDB was called BitKV up to and including 
 
 - The Raft library is github.com/acneism/raft v0.3.11. A node keeps only its latest snapshot, so files deleted by merge free their disk space sooner. A node refuses to start a new cluster over existing data more reliably: the check now reads the Raft log's state instead of looking for one of its files, which a crash on the first start could leave behind empty.
 
+- `RAFT TRANSFER` says why a transfer failed: the target did not catch up, did not win the election in time, or another node won.
+- A removed node learns of its removal and stops acting as a member: it logs it, answers reads and writes with `ERR this node was removed from the cluster`, and `INFO replication` shows `raft_membership:removed`. Before, it ran on with its old membership and served stale reads. See [removing a node](docs/replication.md#removing-a-node).
+
 ### Fixed
 
 - A second learner added after the leader's latest snapshot never caught up, and `RAFT PROMOTE` timed out: the leader kept sending a snapshot whose membership did not include it. The leader now takes a new snapshot.

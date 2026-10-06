@@ -25,7 +25,7 @@ A node whose data directory holds keys but has no Raft state refuses to start: j
 
 ## Finding the leader
 
-`INFO replication` on any node shows `role`, `raft_state`, `raft_term`, `raft_leader_id`, `raft_leader_addr` and the node's own place in the cluster: `raft_membership` (`voter`, `learner` or `none`), `raft_voters` and `raft_learners`. Clients find the leader themselves: from `INFO replication`, or by trying another node after a `READONLY` reply.
+`INFO replication` on any node shows `role`, `raft_state`, `raft_term`, `raft_leader_id`, `raft_leader_addr` and the node's own place in the cluster: `raft_membership` (`voter`, `learner`, `removed` or `none`), `raft_voters` and `raft_learners`. Clients find the leader themselves: from `INFO replication`, or by trying another node after a `READONLY` reply.
 
 ## What is replicated
 
@@ -91,7 +91,7 @@ Once the Raft log has been compacted, a new learner catches up from a snapshot. 
 redis-cli -h 10.0.0.1 RAFT REMOVE n2
 ```
 
-Then **stop the removed node** and delete its directories. A removed node may never learn that it was removed. Running on with its old membership, it can disturb the cluster, and clients that reach it can get stale data. To remove the leader itself, run `RAFT REMOVE` with its own id: it steps down once the change commits, and the others elect a new leader. Or transfer the leadership first.
+Then **stop the removed node** and delete its directories. A removed node learns of its removal from the members that applied it, then stops its Raft node: it logs `this node was removed from the cluster`, answers every read and write with `ERR this node was removed from the cluster`, and `INFO replication` shows `raft_membership:removed`. The members remember removed nodes only until they restart, so a node that was down during its removal and returns after that is refused but not told; stop it yourself. To remove the leader itself, run `RAFT REMOVE` with its own id: it steps down once the change commits, and the others elect a new leader. Or transfer the leadership first.
 
 To replace a failed node, remove it and add a new one with a new id and an empty directory.
 
@@ -110,7 +110,7 @@ redis-cli -h 10.0.0.1 RAFT TRANSFER
 
 Without an id, the leader tries the other voters one by one. The leader first brings the target up to date, then tells it to start an election at once. The command returns `OK` when the target leads.
 
-While the transfer runs, usually for well under a second, the leader rejects writes with `READONLY`; clients retry on the new leader. If the target does not take over within an election timeout, for example because it is down, the command returns `ERR replica: leadership transfer failed` and the old leader continues. Run the command on the leader; other nodes answer with the leader's id and Raft address.
+While the transfer runs, usually for well under a second, the leader rejects writes with `READONLY`; clients retry on the new leader. If the target does not take over, the command returns `ERR replica: leadership transfer failed` with the reason, such as `n2 did not catch up within an election timeout` when it is down or behind, or `another node won the election`, and the old leader continues. Run the command on the leader; other nodes answer with the leader's id and Raft address.
 
 ## Consistent reads
 
