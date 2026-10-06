@@ -77,7 +77,7 @@ func (tn *testNode) stop(t testing.TB) {
 	if tn.node == nil {
 		return
 	}
-	if err := tn.node.Close(); err != nil {
+	if err := tn.node.Close(); err != nil && !errors.Is(err, node.ErrRemoved) {
 		t.Error(err)
 	}
 	if err := tn.db.Close(); err != nil {
@@ -157,33 +157,12 @@ func nodeState(tn *testNode) string {
 	for _, de := range des {
 		snaps = append(snaps, de.Name())
 	}
-	return fmt.Sprintf("\n%s: %+v durable=%d first=%s snap=%v", tn.id, tn.node.Status(), tn.db.DurableIndex(), walFirstIndex(tn), snaps)
+	return fmt.Sprintf("\n%s: %+v durable=%d snap=%v", tn.id, tn.node.Status(), tn.db.DurableIndex(), snaps)
 }
 
-func walFirstIndex(tn *testNode) string {
-	tmp, err := os.MkdirTemp("", "wal-")
-	if err == nil {
-		defer os.RemoveAll(tmp)
-		err = os.CopyFS(tmp, os.DirFS(filepath.Join(tn.dir, "raft", "wal")))
-	}
-	if err != nil {
-		return err.Error()
-	}
-	log, err := raftwal.Open(tmp, voters(tn), raftwal.Options{})
-	if err != nil {
-		return err.Error()
-	}
-	defer log.Close()
-	first, _ := log.FirstIndex()
-	return strconv.FormatUint(first, 10)
-}
-
-func clusterState(nodes []*testNode, before ...string) func() string {
+func clusterState(nodes []*testNode) func() string {
 	return func() string {
 		var b strings.Builder
-		for _, line := range before {
-			b.WriteString(line)
-		}
 		for _, tn := range nodes {
 			b.WriteString(nodeState(tn))
 		}
@@ -287,16 +266,6 @@ func voters(tn *testNode) raft.ConfState {
 	return cs
 }
 
-func firstLogIndex(t *testing.T, tn *testNode) uint64 {
-	t.Helper()
-	log, err := raftwal.Open(filepath.Join(tn.dir, "raft", "wal"), voters(tn), raftwal.Options{})
-	must(t, err)
-	defer log.Close()
-	first, err := log.FirstIndex()
-	must(t, err)
-	return first
-}
-
 func compact(t *testing.T, nodes []*testNode, l *testNode, prefix string) {
 	t.Helper()
 	for _, tn := range nodes {
@@ -304,9 +273,11 @@ func compact(t *testing.T, nodes []*testNode, l *testNode, prefix string) {
 			must(t, tn.db.Sync())
 		}
 	}
+	durable := l.db.DurableIndex()
 	for i := range 20 {
 		must(t, put(l, prefix+strconv.Itoa(i), "v"))
 	}
+	eventually(t, "the leader to compact its log", func() bool { return l.node.Status().FirstIndex+4 > durable }, clusterState(nodes))
 }
 
 func copyDir(t *testing.T, from, to string) {
@@ -617,10 +588,7 @@ func TestCompactsWithoutSnapshots(t *testing.T) {
 	must(t, put(l, "last", "v"))
 	eventually(t, "replication", converged(nodes, "last", "v", 121))
 	for _, tn := range nodes {
-		tn.stop(t)
-		if first := firstLogIndex(t, tn); first < 80 {
-			t.Fatalf("%s: the log still starts at %d", tn.id, first)
-		}
+		eventually(t, tn.id+" to compact its log", func() bool { return tn.node.Status().FirstIndex >= 80 }, clusterState(nodes))
 		if _, _, ok := latestSnapshot(tn); ok {
 			t.Fatalf("%s took a snapshot while every follower kept up", tn.id)
 		}
@@ -711,13 +679,12 @@ func TestSystemStateReplicates(t *testing.T) {
 		must(t, put(l, "k"+strconv.Itoa(i), "v"))
 	}
 	compact(t, nodes, l, "fill")
-	before := "\nthe leader before the restart:" + nodeState(l)
 	f.start(t)
 	eventually(t, "the lagging follower to install a snapshot", func() bool {
 		_, _, ok := latestSnapshot(f)
 		return ok
-	}, clusterState(nodes, before))
-	eventually(t, "the lagging follower to store v2", func() bool { return string(f.db.System()) == "v2" }, clusterState(nodes, before))
+	}, clusterState(nodes))
+	eventually(t, "the lagging follower to store v2", func() bool { return string(f.db.System()) == "v2" }, clusterState(nodes))
 }
 
 func TestLaggingFollowerCatchesUpBySnapshot(t *testing.T) {
@@ -729,11 +696,10 @@ func TestLaggingFollowerCatchesUpBySnapshot(t *testing.T) {
 		must(t, put(l, "k"+strconv.Itoa(i), "v"))
 	}
 	compact(t, nodes, l, "fill")
-	before := "\nthe leader before the restart:" + nodeState(l)
 	f.start(t)
-	eventually(t, "lagging follower to catch up", converged(nodes, "fill19", "v", 80), clusterState(nodes, before))
+	eventually(t, "lagging follower to catch up", converged(nodes, "fill19", "v", 80), clusterState(nodes))
 	eventually(t, "the lagging follower to install a snapshot", func() bool {
 		_, _, ok := latestSnapshot(f)
 		return ok
-	}, clusterState(nodes, before))
+	}, clusterState(nodes))
 }

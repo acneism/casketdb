@@ -66,16 +66,18 @@ type Config struct {
 }
 
 type Status struct {
-	State      string
-	Term       uint64
-	Commit     uint64
-	Applied    uint64
-	LastIndex  uint64
-	LeaderID   string
-	LeaderAddr string
-	Membership string
-	Voters     int
-	Learners   int
+	State         string
+	Term          uint64
+	Commit        uint64
+	Applied       uint64
+	FirstIndex    uint64
+	LastIndex     uint64
+	SnapshotIndex uint64
+	LeaderID      string
+	LeaderAddr    string
+	Membership    string
+	Voters        int
+	Learners      int
 }
 
 type Member struct {
@@ -132,7 +134,11 @@ func open(db *bitcask.DB, cfg Config, tune func(*node.Config)) (*Node, error) {
 	if fileExists(filepath.Join(cfg.Dir, "raft.db")) || fileExists(filepath.Join(cfg.Dir, "wal", "wal-meta.db")) {
 		return nil, ErrOldRaftLog
 	}
-	if !fileExists(filepath.Join(cfg.Dir, "wal", "meta")) && db.Len() > 0 {
+	hasState, err := node.HasState(cfg.Dir)
+	if err != nil {
+		return nil, err
+	}
+	if !hasState && db.Len() > 0 {
 		return nil, ErrNotEmpty
 	}
 	fsm, err := newBitcaskFSM(db, cfg.Dir)
@@ -165,6 +171,7 @@ func open(db *bitcask.DB, cfg Config, tune func(*node.Config)) (*Node, error) {
 		NoSync:          cfg.UnsafeNoFsync,
 		CompactEntries:  1 << 16,
 		TrailingEntries: 1 << 16,
+		KeepSnapshots:   1,
 		Logger:          logger.With("component", "raft"),
 	}
 	if tune != nil {
@@ -348,16 +355,18 @@ func (n *Node) Status() Status {
 		membership = "learner"
 	}
 	return Status{
-		State:      st.State.String(),
-		Term:       st.Term,
-		Commit:     st.Commit,
-		Applied:    st.Applied,
-		LastIndex:  st.LastIndex,
-		LeaderID:   string(st.Lead),
-		LeaderAddr: cs.Addrs[st.Lead],
-		Membership: membership,
-		Voters:     len(cs.Voters),
-		Learners:   len(cs.Learners),
+		State:         st.State.String(),
+		Term:          st.Term,
+		Commit:        st.Commit,
+		Applied:       st.Applied,
+		FirstIndex:    st.FirstIndex,
+		LastIndex:     st.LastIndex,
+		SnapshotIndex: st.Snapshot.Index,
+		LeaderID:      string(st.Lead),
+		LeaderAddr:    cs.Addrs[st.Lead],
+		Membership:    membership,
+		Voters:        len(cs.Voters),
+		Learners:      len(cs.Learners),
 	}
 }
 

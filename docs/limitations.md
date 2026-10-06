@@ -29,10 +29,9 @@ These are deliberate choices, not missing features:
 | FLUSHDB, CONFIG, INFO, SELECT and similar commands are rejected inside MULTI | Run them after the transaction commits |
 | Expiry depends on the system clock | Detect a backward clock jump at start |
 | No online backup | A backup command built on the hard-link snapshots |
-| Snapshots hold hard links, so disk space of files deleted by merge is freed only when the snapshot is dropped | Keep one snapshot, or align merges with snapshots |
+| A node keeps its latest snapshot, which holds hard links, so disk space of files deleted by merge is freed only when a newer snapshot replaces it | Drop a snapshot once no follower needs it, which the Raft library does not do yet |
 | Clients find the leader themselves, from `INFO replication` or a `READONLY` reply | Proxy writes to the leader, or reply with its address |
 | Each node expires keys by its own clock | NTP; if needed, expiry as Raft entries from the leader |
 | An existing single-node database cannot join a cluster | Import through a snapshot when the cluster starts |
-| A learner added after the leader took its latest snapshot cannot catch up from a snapshot until the Raft log is compacted past that snapshot, up to about 65,536 writes later: it rejects the snapshot, whose membership does not include it, and the leader sends the same one again. `RAFT PROMOTE` times out meanwhile | A fix in the Raft library, github.com/acneism/raft v0.3.1: take a new snapshot for such a learner |
 | Restoring a snapshot on a follower goes through a temporary database: about twice the key index in memory and a full rewrite of the data | Swap data files and rebuild the index in place |
 | No production track record. The fault-injection tests cover crashes, partitions, leadership transfers and membership changes, but not clock skew or disk faults | Real deployments; clock and disk faults in the fault-injection tests |

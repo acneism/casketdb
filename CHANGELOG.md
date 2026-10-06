@@ -2,6 +2,20 @@
 
 Versions are listed newest first. CasketDB was called BitKV up to and including v0.9.
 
+## Unreleased
+
+### Changed
+
+- The Raft library is github.com/acneism/raft v0.3.11. A node keeps only its latest snapshot, so files deleted by merge free their disk space sooner. A node refuses to start a new cluster over existing data more reliably: the check now reads the Raft log's state instead of looking for one of its files, which a crash on the first start could leave behind empty.
+
+### Fixed
+
+- A second learner added after the leader's latest snapshot never caught up, and `RAFT PROMOTE` timed out: the leader kept sending a snapshot whose membership did not include it. The leader now takes a new snapshot.
+
+### Upgrading from v0.14
+
+- A cluster can be upgraded one node at a time: the nodes agree on the protocol version when they connect.
+
 ## v0.14 — 2026-10-05
 
 ### Added

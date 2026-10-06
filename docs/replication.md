@@ -83,7 +83,7 @@ Changes go one at a time and run on the leader. A second change while one is in 
 
 `INFO replication` on the new node shows `raft_membership:learner`, then `voter`. Keep an odd number of voters: 4 voters survive one failure, like 3, but need one more node for a majority.
 
-Once the Raft log has been compacted, a new learner catches up from a snapshot. The leader takes one when a follower first needs it, and sends that same snapshot to later learners too. A learner added after the snapshot was taken is not in its membership and rejects it, and with the current Raft library the leader takes a new snapshot only after the log is compacted past the old one, up to about 65,536 writes later. So the second and later nodes added in that window stay at `raft_applied_index:0` and `RAFT PROMOTE` times out. Such a node catches up by itself once the log is compacted past that snapshot; run `RAFT PROMOTE` again then. See [limitations](limitations.md).
+Once the Raft log has been compacted, a new learner catches up from a snapshot. The leader takes one when a follower first needs it, and takes a new one when the latest snapshot predates a member, so learners added one after another all catch up.
 
 ### Removing a node
 
@@ -145,7 +145,7 @@ With `-appendfsync no`, the data files are fsynced every 30 seconds, so the dura
 
 ## Snapshots
 
-A snapshot is taken only when a follower falls behind the start of the leader's log. It hard-links the data and hint files and adds a list of their lengths, so it costs time proportional to the number of files, not the data size. The leader keeps the two latest snapshots in `<raft-dir>/snap/`. While a snapshot is kept, files that a merge deleted still take disk space.
+A snapshot is taken only when a follower falls behind the start of the leader's log. It hard-links the data and hint files and adds a list of their lengths, so it costs time proportional to the number of files, not the data size. A node keeps only its latest snapshot in `<raft-dir>/snap/`. While it is kept, files that a merge deleted still take disk space.
 
 A follower restores a snapshot through a temporary database in `<raft-dir>/restore`, then clears its own data and copies the keys in batches. Peak memory is about twice the key index. An interrupted restore is marked in the Raft log and repeated on the next start.
 

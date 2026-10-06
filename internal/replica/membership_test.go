@@ -108,7 +108,6 @@ func TestLearnerAddedBeforeItStarts(t *testing.T) {
 }
 
 func TestLearnersJoinOneAfterAnotherBySnapshot(t *testing.T) {
-	t.Skip("acneism/raft v0.3.1 sends a learner the leader's latest snapshot even when it was taken before the learner was added; the learner rejects it, and no newer one is taken until the log is compacted past it")
 	nodes := newCluster(t, 3, false)
 	l := leader(t, nodes)
 	for i := range 60 {
