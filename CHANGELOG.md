@@ -2,7 +2,7 @@
 
 Versions are listed newest first. CasketDB was called BitKV up to and including v0.9.
 
-## Unreleased
+## v0.15 — 2026-10-06
 
 ### Added
 
@@ -19,6 +19,10 @@ Versions are listed newest first. CasketDB was called BitKV up to and including 
 ### Fixed
 
 - A second learner added after the leader's latest snapshot never caught up, and `RAFT PROMOTE` timed out: the leader kept sending a snapshot whose membership did not include it. The leader now takes a new snapshot.
+
+### Known issues
+
+- Members remember removed nodes only until they restart. A node that was down while it was removed, and comes back after every member has restarted, is refused but not told of its removal: stop it yourself. See [removing a node](docs/replication.md#removing-a-node).
 
 ### Upgrading from v0.14
 
