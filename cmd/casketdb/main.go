@@ -39,6 +39,7 @@ type config struct {
 	raftCA      string
 	raftListen  string
 	raftTimeout time.Duration
+	raftCluster string
 	metricsAddr string
 	tlsAddr     string
 	tlsCert     string
@@ -81,7 +82,8 @@ func main() {
 	flag.BoolVar(&cfg.raftNoFsync, "raft-unsafe-no-fsync", false, "skip fsync of the raft log: faster, but a power loss on one node followed by a leader failure can lose acknowledged writes")
 	flag.StringVar(&cfg.raftReads, "raft-reads", "local", "read consistency in a cluster: local (may be stale), linearizable (confirmed by the leader) or lease (the leader answers from its lease)")
 	flag.Float64Var(&cfg.raftDrift, "raft-max-clock-drift", 0.1, "largest relative difference between node clock rates that -raft-reads lease tolerates")
-	flag.BoolVar(&cfg.raftJoin, "raft-join", false, "join a running cluster: add the node on the leader with RAFT ADDLEARNER and pass its reply as -raft-peers")
+	flag.BoolVar(&cfg.raftJoin, "raft-join", false, "join a running cluster: add the node on the leader with RAFT ADDLEARNER; -raft-peers may list only this node when every member runs v0.15 or later, otherwise pass the reply of RAFT ADDLEARNER")
+	flag.StringVar(&cfg.raftCluster, "raft-cluster-id", "", "cluster ID: nodes refuse Raft connections from nodes with another ID; set the same value on every node")
 	flag.StringVar(&cfg.raftCert, "raft-tls-cert", "", "PEM certificate of this node for mutual TLS between nodes; its DNS name must be the node id")
 	flag.StringVar(&cfg.raftKey, "raft-tls-key", "", "PEM private key for -raft-tls-cert")
 	flag.StringVar(&cfg.raftCA, "raft-tls-ca", "", "PEM certificates of the CA that signs node certificates")
@@ -378,6 +380,7 @@ func openReplica(cfg config, db *bitcask.DB, logger *slog.Logger) (*replica.Node
 		MaxClockDrift:   cfg.raftDrift,
 		Join:            cfg.raftJoin,
 		ElectionTimeout: cfg.raftTimeout,
+		ClusterID:       cfg.raftCluster,
 	})
 }
 

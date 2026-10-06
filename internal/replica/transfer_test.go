@@ -49,6 +49,40 @@ func TestTransferLeadership(t *testing.T) {
 	handOver(t, nodes, next, "")
 }
 
+func TestStatusReportsPeers(t *testing.T) {
+	nodes := newCluster(t, 3, false)
+	l := leader(t, nodes)
+	must(t, put(l, "k", "v"))
+	eventually(t, "the leader to see both followers caught up", func() bool {
+		st := l.node.Status()
+		caughtUp := 0
+		for _, p := range st.Peers {
+			if p.Match == st.LastIndex && p.State == "replicate" && p.Active && !p.Learner && p.Addr != "" {
+				caughtUp++
+			}
+		}
+		return len(st.Peers) == 2 && caughtUp == 2
+	}, clusterState(nodes))
+	if st := follower(nodes, l).node.Status(); len(st.Peers) != 0 || st.FirstIndex == 0 {
+		t.Fatalf("follower status %+v", st)
+	}
+}
+
+func TestClusterID(t *testing.T) {
+	nodes := newCluster(t, 3, false, func(tn *testNode) { tn.cluster = "c1" })
+	l := leader(t, nodes)
+	must(t, put(l, "k", "v"))
+	eventually(t, "replication within the cluster", converged(nodes, "k", "v", 1))
+	other := &testNode{id: "n3", dir: t.TempDir(), peers: map[string]string{"n3": freeAddr(t)}, join: true, cluster: "c2"}
+	other.start(t)
+	t.Cleanup(func() { other.stop(t) })
+	must(t, l.node.AddLearner(other.id, other.peers[other.id]))
+	time.Sleep(time.Second)
+	if n := other.db.Len(); n != 0 {
+		t.Fatalf("a node of another cluster received %d keys", n)
+	}
+}
+
 func TestTransferLeadershipErrors(t *testing.T) {
 	nodes := newCluster(t, 3, false)
 	l := leader(t, nodes)

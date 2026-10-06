@@ -14,8 +14,11 @@ A CasketDB cluster is 3 or 5 nodes that hold the same data and agree on every wr
 Start every node with the same `-raft-peers` and empty directories. The initial configuration comes from `-raft-peers`, so no bootstrap step is needed.
 
 ```bash
-CASKETDB_REQUIREPASS=secret casketdb -addr 10.0.0.1:6379 -dir data -raft-id n1 -raft-peers n1=10.0.0.1:7000,n2=10.0.0.2:7000,n3=10.0.0.3:7000
+CASKETDB_REQUIREPASS=secret casketdb -addr 10.0.0.1:6379 -dir data -raft-id n1 -raft-cluster-id prod \
+  -raft-peers n1=10.0.0.1:7000,n2=10.0.0.2:7000,n3=10.0.0.3:7000
 ```
+
+`-raft-cluster-id` is optional. With it, a node refuses Raft connections from nodes that carry another cluster ID, so two clusters whose nodes share ids such as `n1` cannot talk to each other after an address is reused or `-raft-peers` is wrong. A node without an ID is still accepted, with a warning, so the ID can be added to a running cluster one node at a time.
 
 The address in `-raft-peers` is how the other nodes reach that node's Raft transport; the node listens on it too, unless `-raft-listen` gives another address, for example behind NAT or in a container. `-addr` is where clients connect. Clients come from other hosts, so give every node the same password: without one, [protected mode](configuration.md#protected-mode) refuses them. The `redis-cli` examples below read it from `REDISCLI_AUTH`.
 
@@ -25,7 +28,7 @@ A node whose data directory holds keys but has no Raft state refuses to start: j
 
 ## Finding the leader
 
-`INFO replication` on any node shows `role`, `raft_state`, `raft_term`, `raft_leader_id`, `raft_leader_addr` and the node's own place in the cluster: `raft_membership` (`voter`, `learner`, `removed` or `none`), `raft_voters` and `raft_learners`. Clients find the leader themselves: from `INFO replication`, or by trying another node after a `READONLY` reply.
+`INFO replication` on any node shows `role`, `raft_state`, `raft_term`, `raft_leader_id`, `raft_leader_addr` and the node's own place in the cluster: `raft_membership` (`voter`, `learner`, `removed` or `none`), `raft_voters` and `raft_learners`, and the log: `raft_commit_index`, `raft_applied_index`, `raft_first_index`, `raft_last_index` and `raft_snapshot_index`. On the leader, a line `raft_peer<N>` per other member gives its id, address, role, replication state (`probe`, `replicate` or `snapshot`), `match` and `next` index, `lag` behind the leader's last index, and whether it is `active` and `paused`. Clients find the leader themselves: from `INFO replication`, or by trying another node after a `READONLY` reply.
 
 ## What is replicated
 
@@ -68,7 +71,7 @@ Changes go one at a time and run on the leader. A second change while one is in 
    "n4=10.0.0.4:7000,n1=10.0.0.1:7000,n2=10.0.0.2:7000,n3=10.0.0.3:7000"
    ```
 
-2. Start the new node with an empty data directory, `-raft-join`, and that `-raft-peers` value. A node that does not list the current leader rejects its messages and never catches up. The node may also be started before step 1, with the list built from `RAFT MEMBERS`.
+2. Start the new node with an empty data directory, `-raft-join`, the cluster's `-raft-cluster-id` if it has one, and that `-raft-peers` value. When every member runs v0.15 or later, `-raft-peers` may list only the new node: it learns the members from the connections they open to it. An older member is reached only if the list names it. The node may also be started before step 1.
 
    ```bash
    CASKETDB_REQUIREPASS=secret casketdb -addr 10.0.0.4:6379 -dir data -raft-id n4 -raft-join \

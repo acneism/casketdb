@@ -64,6 +64,7 @@ type Config struct {
 	MaxClockDrift   float64
 	Join            bool
 	ElectionTimeout time.Duration
+	ClusterID       string
 }
 
 type Status struct {
@@ -79,6 +80,18 @@ type Status struct {
 	Membership    string
 	Voters        int
 	Learners      int
+	Peers         []PeerStatus
+}
+
+type PeerStatus struct {
+	ID      string
+	Addr    string
+	Learner bool
+	State   string
+	Match   uint64
+	Next    uint64
+	Active  bool
+	Paused  bool
 }
 
 type Member struct {
@@ -175,6 +188,7 @@ func open(db *bitcask.DB, cfg Config, tune func(*node.Config)) (*Node, error) {
 		CompactEntries:  1 << 16,
 		TrailingEntries: 1 << 16,
 		KeepSnapshots:   1,
+		ClusterID:       cfg.ClusterID,
 		Logger:          logger.With("component", "raft"),
 	}
 	if tune != nil {
@@ -380,6 +394,14 @@ func (n *Node) Status() Status {
 	case slices.Contains(cs.Learners, n.id):
 		membership = "learner"
 	}
+	var peers []PeerStatus
+	for id, pr := range st.Progress {
+		if id != n.id {
+			peers = append(peers, PeerStatus{ID: string(id), Addr: cs.Addrs[id], Learner: pr.Learner, State: strings.ToLower(pr.State.String()),
+				Match: pr.Match, Next: pr.Next, Active: pr.RecentActive, Paused: pr.Paused})
+		}
+	}
+	slices.SortFunc(peers, func(a, b PeerStatus) int { return strings.Compare(a.ID, b.ID) })
 	return Status{
 		State:         st.State.String(),
 		Term:          st.Term,
@@ -393,6 +415,7 @@ func (n *Node) Status() Status {
 		Membership:    membership,
 		Voters:        len(cs.Voters),
 		Learners:      len(cs.Learners),
+		Peers:         peers,
 	}
 }
 

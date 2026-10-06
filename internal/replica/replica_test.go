@@ -26,16 +26,17 @@ import (
 )
 
 type testNode struct {
-	id     string
-	dir    string
-	peers  map[string]string
-	db     *bitcask.DB
-	node   *Node
-	unsafe bool
-	reads  ReadMode
-	join   bool
-	tls    *tls.Config
-	tune   func(*node.Config)
+	id      string
+	dir     string
+	peers   map[string]string
+	db      *bitcask.DB
+	node    *Node
+	unsafe  bool
+	reads   ReadMode
+	join    bool
+	tls     *tls.Config
+	tune    func(*node.Config)
+	cluster string
 }
 
 var tuning = testTuning
@@ -59,7 +60,7 @@ func (tn *testNode) start(t testing.TB) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	n, err := open(db, Config{ID: tn.id, Peers: tn.peers, Dir: filepath.Join(tn.dir, "raft"), UnsafeNoFsync: tn.unsafe, TLS: tn.tls, Reads: tn.reads, Join: tn.join}, func(c *node.Config) {
+	n, err := open(db, Config{ID: tn.id, Peers: tn.peers, Dir: filepath.Join(tn.dir, "raft"), UnsafeNoFsync: tn.unsafe, TLS: tn.tls, Reads: tn.reads, Join: tn.join, ClusterID: tn.cluster}, func(c *node.Config) {
 		tuning(c)
 		if tn.tune != nil {
 			tn.tune(c)

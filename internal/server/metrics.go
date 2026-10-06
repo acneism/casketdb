@@ -89,7 +89,9 @@ func (s *Server) WriteMetrics(w io.Writer) {
 	metric("gauge", "casketdb_raft_term", rs.Term)
 	metric("gauge", "casketdb_raft_commit_index", rs.Commit)
 	metric("gauge", "casketdb_raft_applied_index", rs.Applied)
+	metric("gauge", "casketdb_raft_first_index", rs.FirstIndex)
 	metric("gauge", "casketdb_raft_last_index", rs.LastIndex)
+	metric("gauge", "casketdb_raft_snapshot_index", rs.SnapshotIndex)
 	metric("gauge", "casketdb_raft_voters", rs.Voters)
 	metric("gauge", "casketdb_raft_learners", rs.Learners)
 }

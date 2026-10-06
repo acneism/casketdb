@@ -32,7 +32,8 @@ CasketDB is configured with command-line flags or the matching [environment vari
 | `-raft-tls-cert` | empty | PEM certificate of this node for mutual TLS between nodes; its first DNS name must be the node id. Set together with `-raft-tls-key` and `-raft-tls-ca`, see [mutual TLS](replication.md#mutual-tls-between-nodes) |
 | `-raft-tls-key` | empty | PEM private key of `-raft-tls-cert` |
 | `-raft-tls-ca` | empty | PEM certificates of the CA that signs node certificates |
-| `-raft-join` | `false` | Join a running cluster instead of creating one. `-raft-peers` lists this node and every current member, as `RAFT ADDLEARNER` returns it; see [adding a node](replication.md#adding-a-node) |
+| `-raft-join` | `false` | Join a running cluster instead of creating one. `-raft-peers` may list only this node when every member runs v0.15 or later; otherwise it lists every current member, as `RAFT ADDLEARNER` returns it; see [adding a node](replication.md#adding-a-node) |
+| `-raft-cluster-id` | empty | Cluster ID. A node refuses Raft connections from nodes with another ID; nodes without one are accepted with a warning. Set the same value on every node, see [starting a cluster](replication.md#starting-a-cluster) |
 | `-raft-dir` | `<dir>/raft` | Raft log and snapshots |
 | `-raft-listen` | the node's address in `-raft-peers` | Address the Raft transport listens on, when it differs from the address other nodes use, for example behind NAT or in a container |
 | `-raft-election-timeout` | `1s` | Time without a leader before a node starts an election, at least 100 ms. Heartbeats go ten times as often. Lower it for faster failover on a fast network, raise it across slow links |
@@ -103,7 +104,7 @@ casketdb -addr 127.0.0.1:6383 -dir n3 -raft-id n3 -raft-peers n1=127.0.0.1:7001,
 | Clients | `connected_clients`, `maxclients`, `blocked_clients` |
 | Persistence | `aof_enabled`, `appendfsync`, `bitcask_logs`, `bitcask_data_files`, `bitcask_total_bytes`, `bitcask_live_bytes`, `bitcask_merges`, `bitcask_writes`, `bitcask_fsyncs` |
 | Stats | `total_connections_received`, `rejected_connections`, `total_commands_processed`, `expired_keys` |
-| Replication | `role` (`master` on the leader and on a single node, `slave` on followers), `raft_state`, `raft_term`, `raft_applied_index`, `raft_leader_id`, `raft_leader_addr`, `raft_membership` (`voter`, `learner`, `removed` or `none`), `raft_voters`, `raft_learners` |
+| Replication | `role` (`master` on the leader and on a single node, `slave` on followers), `raft_state`, `raft_term`, `raft_commit_index`, `raft_applied_index`, `raft_first_index`, `raft_last_index`, `raft_snapshot_index`, `raft_leader_id`, `raft_leader_addr`, `raft_membership` (`voter`, `learner`, `removed` or `none`), `raft_voters`, `raft_learners`, and on the leader `raft_peer<N>` for each other member, see [finding the leader](replication.md#finding-the-leader) |
 | Keyspace | `db0:keys=…,expires=…` |
 
 `bitcask_total_bytes` minus `bitcask_live_bytes` is the space a merge can reclaim.

@@ -494,12 +494,30 @@ func cmdInfo(s *Server, c *client, args [][]byte) reply {
 		line("role:%s", role)
 		line("raft_state:%s", rs.State)
 		line("raft_term:%d", rs.Term)
+		line("raft_commit_index:%d", rs.Commit)
 		line("raft_applied_index:%d", rs.Applied)
+		line("raft_first_index:%d", rs.FirstIndex)
+		line("raft_last_index:%d", rs.LastIndex)
+		line("raft_snapshot_index:%d", rs.SnapshotIndex)
 		line("raft_leader_id:%s", rs.LeaderID)
 		line("raft_leader_addr:%s", rs.LeaderAddr)
 		line("raft_membership:%s", rs.Membership)
 		line("raft_voters:%d", rs.Voters)
 		line("raft_learners:%d", rs.Learners)
+		for i, p := range rs.Peers {
+			role, active, paused := "voter", 0, 0
+			if p.Learner {
+				role = "learner"
+			}
+			if p.Active {
+				active = 1
+			}
+			if p.Paused {
+				paused = 1
+			}
+			line("raft_peer%d:id=%s,addr=%s,role=%s,state=%s,match=%d,next=%d,lag=%d,active=%d,paused=%d",
+				i, p.ID, p.Addr, role, p.State, p.Match, p.Next, max(rs.LastIndex, p.Match)-p.Match, active, paused)
+		}
 	} else {
 		line("role:master")
 	}

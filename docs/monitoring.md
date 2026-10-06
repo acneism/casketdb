@@ -47,7 +47,9 @@ A cluster node also exports:
 | `casketdb_raft_term` | gauge | Current term |
 | `casketdb_raft_commit_index` | gauge | Highest log index known to be committed |
 | `casketdb_raft_applied_index` | gauge | Highest log index applied to the database |
+| `casketdb_raft_first_index` | gauge | First index still in this node's log, after compaction |
 | `casketdb_raft_last_index` | gauge | Last index in this node's log |
+| `casketdb_raft_snapshot_index` | gauge | Index of this node's latest snapshot, 0 if it has none |
 | `casketdb_raft_voters` | gauge | Voters in the cluster |
 | `casketdb_raft_learners` | gauge | Learners in the cluster |
 
