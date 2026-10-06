@@ -4,6 +4,10 @@ Versions are listed newest first. CasketDB was called BitKV up to and including 
 
 ## Unreleased
 
+### Added
+
+- [Benchmarks](docs/benchmarks.md) compare CasketDB with Redis 7.2 and etcd 3.7 on the same machine, with the method and the commands to repeat them.
+
 ### Changed
 
 - A pipeline of commands that each touch one key, such as SET or LPUSH, no longer commits across logs in two phases. Each log's part commits on its own, and the shard locks are released before the write instead of after it. Such a pipeline is not atomic across a crash, as in Redis; MULTI/EXEC and commands with several keys still are. See [how a write reaches disk](docs/persistence.md#how-a-write-reaches-disk).

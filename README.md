@@ -95,7 +95,13 @@ Design and development:
 
 ## Performance
 
-On a 4-core laptop (AMD Ryzen 5 3500U), a single node serves about 395k ops/s on Windows and 1.06M ops/s on Linux (WSL2) for a 90% GET / 10% SET mix with 8 threads. A GET from memory takes about 1 µs. These numbers come from in-process Go benchmarks on one machine; a head-to-head comparison with Redis and replicated-mode numbers for the current Raft engine are not published yet. See [benchmarks](docs/benchmarks.md).
+On a 4-core laptop (AMD Ryzen 5 3500U, WSL2), measured with `redis-benchmark` against Redis 7.2 with AOF `everysec`:
+
+- Pipelined SET and GET from one client run at 1.2 and 1.1 times Redis's rate. From four clients they run at 1.3 and 1.5 times, because CasketDB uses every core.
+- Commands on one hot list, set, hash or sorted set run at 0.25–0.5 of Redis.
+- A three-node cluster writes 1.6–3.1 times as fast as etcd 3.7 on the same machine and reads 3.7–5.6 times as fast.
+
+See [benchmarks](docs/benchmarks.md) for the method and all numbers.
 
 ## Contributing
 
