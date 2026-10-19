@@ -1,0 +1,14 @@
+# Keep the build context to what the image needs: the source and go.mod.
+.git
+.github
+.claude
+bin
+data
+data*
+log-[0-9][0-9][0-9]
+*.exe
+*.test
+*.out
+coverage.txt
+graphify-out
+TODO.md
