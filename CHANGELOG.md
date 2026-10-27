@@ -6,6 +6,7 @@ Versions are listed newest first. CasketDB was called BitKV up to and including 
 
 ### Added
 
+- A Dockerfile builds a distroless image with the static binary, running as a non-root user, listening on `0.0.0.0:6379` and keeping data in the volume `/data`. Multi-platform builds cross-compile without emulation. See [quick start](README.md#quick-start).
 - [Benchmarks](docs/benchmarks.md) compare CasketDB with Redis 7.2 and etcd 3.7 on the same machine, with the method and the commands to repeat them.
 
 ### Changed

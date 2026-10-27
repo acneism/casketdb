@@ -56,6 +56,16 @@ redis-cli GET greeting
 
 The server listens on `127.0.0.1:6379` by default; change it with `-addr`. On a non-loopback address, set a password with `-requirepass` or the `CASKETDB_REQUIREPASS` environment variable; without one, [protected mode](docs/configuration.md#protected-mode) refuses clients from other hosts. All flags are listed in [configuration](docs/configuration.md).
 
+Or run it in Docker:
+
+```bash
+docker build -t casketdb .
+docker run -d --name casketdb -p 6379:6379 -v casketdb-data:/data -e CASKETDB_REQUIREPASS=secret casketdb
+redis-cli -a secret SET greeting hello
+```
+
+The image holds only the static binary on a distroless base and runs as the non-root user 65532. Inside the container the server listens on `0.0.0.0:6379` and keeps its data in the volume at `/data`. Clients reach it through the published port from another address, so set a password; without one, protected mode refuses them. A host directory mounted at `/data` instead of a volume must be writable by user 65532. Flags go after the image name and win over the environment: `docker run ... casketdb -appendfsync always`.
+
 ## Running a cluster
 
 Start three nodes with the same `-raft-peers`, the same password and empty directories. The cluster forms by itself:

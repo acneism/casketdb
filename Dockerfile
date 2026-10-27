@@ -14,7 +14,7 @@ ARG TARGETOS
 ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags="-s -w" -o /out/casketdb ./cmd/casketdb \
-    && mkdir -p /out/data
+    && mkdir -m 700 -p /out/data
 
 # Distroless: the binary, its certificates and a non-root user, nothing else.
 FROM gcr.io/distroless/static-debian13:nonroot
@@ -22,7 +22,8 @@ FROM gcr.io/distroless/static-debian13:nonroot
 COPY --from=build /out/casketdb /usr/local/bin/casketdb
 
 # The volume inherits the permissions of /data, so it must belong to the
-# non-root user (65532) before the volume is mounted over it.
+# non-root user (65532) and be closed to others (700) before the volume is
+# mounted over it.
 COPY --from=build --chown=65532:65532 /out/data /data
 WORKDIR /data
 VOLUME /data
