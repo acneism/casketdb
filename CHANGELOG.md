@@ -6,11 +6,16 @@ Versions are listed newest first. CasketDB was called BitKV up to and including 
 
 ### Added
 
+- Lua scripts and functions through [github.com/acneism/lua](https://github.com/acneism/lua): EVAL, EVALSHA, EVAL_RO, EVALSHA_RO, SCRIPT LOAD, EXISTS, FLUSH and KILL, FCALL, FCALL_RO, and FUNCTION LOAD, DELETE, FLUSH, LIST, STATS, DUMP, RESTORE and KILL. A script runs as one transaction on the keys it declares and replicates as its effects. Function libraries are stored in `SYSTEM` and replicated like users. See [scripts and functions](docs/commands.md#scripts-and-functions) and [ADR 13](docs/adr/0013-lua-scripting.md).
+- TIME.
+- The ACL category `@scripting`.
 - A Dockerfile builds a distroless image with the static binary, running as a non-root user, listening on `0.0.0.0:6379` and keeping data in the volume `/data`. Multi-platform builds cross-compile without emulation. See [quick start](README.md#quick-start).
 - [Benchmarks](docs/benchmarks.md) compare CasketDB with Redis 7.2 and etcd 3.7 on the same machine, with the method and the commands to repeat them.
 
 ### Changed
 
+- A transaction that touches a key outside the shards it locked runs again with every shard locked. Only scripts can do that.
+- `SYSTEM` may hold function libraries without users. `-requirepass` is ignored only once users are stored in it.
 - A pipeline of commands that each touch one key, such as SET or LPUSH, no longer commits across logs in two phases. Each log's part commits on its own, and the shard locks are released before the write instead of after it. Such a pipeline is not atomic across a crash, as in Redis; MULTI/EXEC and commands with several keys still are. See [how a write reaches disk](docs/persistence.md#how-a-write-reaches-disk).
 - A transaction over several shards no longer waits for a busy shard while it holds the others. It releases them, waits for that shard, and tries again; after four rounds it falls back to locking in order.
 - Together, on four clients pipelining SET, these changes raised throughput by 10–30% and cut the 99th percentile latency from about 0.5 s to about 70 ms on the benchmark machine. At full load the median rose from about 3 ms to 8 ms, as the wait is now shared out evenly instead of falling on a few unlucky batches.

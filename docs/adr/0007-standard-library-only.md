@@ -1,6 +1,6 @@
 # 7. The standard library only, outside the Raft adapter
 
-Status: accepted, 2026-09-25.
+Status: accepted, 2026-09-25. [ADR 13](0013-lua-scripting.md) adds github.com/acneism/lua to the server.
 
 ## Context
 

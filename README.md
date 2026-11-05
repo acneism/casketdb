@@ -13,7 +13,7 @@ CasketDB is a Redis-compatible key-value store written in Go. It keeps values on
 
 Any Redis client — `redis-cli`, `redis-benchmark`, go-redis, redis-py — works with CasketDB unchanged, within the [supported commands](docs/commands.md).
 
-> **Status: early.** CasketDB is covered by unit, model and fuzz tests and by fault-injection tests that check linearizability under `kill -9`, network partitions and membership changes, but it has not run in production yet. It supports string commands only. Read [limitations](docs/limitations.md) before relying on it.
+> **Status: early.** CasketDB is covered by unit, model and fuzz tests and by fault-injection tests that check linearizability under `kill -9`, network partitions and membership changes, but it has not run in production yet. Read [limitations](docs/limitations.md) before relying on it.
 >
 > The project was called BitKV until 2026-09-28.
 
@@ -34,7 +34,8 @@ Any Redis client — `redis-cli`, `redis-benchmark`, go-redis, redis-py — work
 - **All cores.** 1024 lock shards instead of a single command thread, and four parallel logs with group commit.
 - **No lost acknowledged writes in a cluster.** With 3 or 5 nodes, a write is acknowledged only after a majority has it in the Raft log. Redis replication is asynchronous; CasketDB's is not.
 - **Familiar durability.** `appendfsync always | everysec | no` with Redis semantics. An acknowledged write survives `kill -9` in every mode and a power loss according to the fsync policy.
-- **Small and dependency-light.** One binary. The only external dependency of the server is the Raft library [github.com/acneism/raft](https://github.com/acneism/raft); the tests also use [Porcupine](https://github.com/anishathalye/porcupine).
+- **Lua scripts and functions.** EVAL, EVALSHA and FCALL run atomically on the same Lua 5.1 as Redis 7.2, through [github.com/acneism/lua](https://github.com/acneism/lua), and replicate as their effects.
+- **Small and dependency-light.** One binary. The external dependencies of the server are the Raft library [github.com/acneism/raft](https://github.com/acneism/raft) and the Lua interpreter [github.com/acneism/lua](https://github.com/acneism/lua); the tests also use [Porcupine](https://github.com/anishathalye/porcupine).
 
 ## Quick start
 

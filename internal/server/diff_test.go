@@ -413,6 +413,38 @@ var diffCommands = []func(g *diffGen) []string{
 		name := g.pick("GET", "SET", "HSET", "LPUSH", "SADD", "ZADD", "XADD", "PFADD", "LRANGE", "ZRANGE", "HGET", "GETRANGE", "EXISTS")
 		return cmd(name, g.list(func() string { return g.key("s") }, 0, 1))
 	},
+	func(g *diffGen) []string {
+		script := g.pick(
+			"return redis.call('GET', KEYS[1])",
+			"return redis.call('SET', KEYS[1], ARGV[1])",
+			"return redis.call('INCRBY', KEYS[1], ARGV[1])",
+			"return redis.pcall('INCRBY', KEYS[1], ARGV[1])",
+			"return redis.call('APPEND', KEYS[1], ARGV[1])",
+			"return {redis.call('EXISTS', KEYS[1]), redis.call('STRLEN', KEYS[1])}",
+			"return redis.call('TYPE', KEYS[1]).ok",
+			"local v = redis.call('GET', KEYS[1]) if v then return v .. ARGV[1] end return false",
+			"return redis.call('LPUSH', KEYS[1], ARGV[1])",
+			"return redis.call('LRANGE', KEYS[1], 0, -1)",
+			"return redis.call('ZADD', KEYS[1], 1, ARGV[1])",
+			"return redis.call('ZRANGE', KEYS[1], 0, -1, 'WITHSCORES')",
+			"return redis.call('HSET', KEYS[1], 'f', ARGV[1])",
+			"return redis.call('HGET', KEYS[1], 'f')",
+			"return redis.call('GET', 'u' .. ARGV[1])",
+			"redis.call('SET', 'u' .. ARGV[1], KEYS[1]) return redis.call('GET', 'u' .. ARGV[1])",
+			"return redis.call('DEL', KEYS[1])",
+			"return redis.call('EXPIRE', KEYS[1], 100)",
+			"return redis.call('NOSUCH')",
+			"return redis.call('GET')",
+			"error('boom')",
+			"return redis.error_reply('MY custom')",
+			"return redis.status_reply('FINE')",
+			"return {1, 'two', {3, false}, true}",
+			"return 3.99",
+			"return redis.sha1hex(ARGV[1])",
+			"return cjson.encode({a = ARGV[1]})",
+		)
+		return cmd(g.pick("EVAL", "EVAL", "EVAL", "EVAL_RO"), one(script, "1", g.key("s"), g.value()))
+	},
 }
 
 var diffUnordered = map[string]bool{"SMEMBERS": true, "SINTER": true, "SUNION": true, "SDIFF": true, "KEYS": true, "HKEYS": true, "HVALS": true}

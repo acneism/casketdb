@@ -19,16 +19,17 @@ CasketDB implements the commands of Redis 7 listed below over RESP2 and RESP3. S
 | Keys | DEL, UNLINK, EXISTS, TYPE, RENAME, RENAMENX, COPY, OBJECT, KEYS, SCAN, DBSIZE | Glob patterns `*`, `?`, `[a-z]`, `[^x]`, `\`. SCAN accepts MATCH, COUNT, TYPE. COPY accepts REPLACE and `DB 0`. OBJECT supports ENCODING only, see [data types](#data-types) |
 | Expiry | EXPIRE, PEXPIRE, EXPIREAT, PEXPIREAT, TTL, PTTL, PERSIST | NX, XX, GT, LT. A time in the past deletes the key. TTL returns −2 for a missing key and −1 for a key without expiry |
 | Transactions | MULTI, EXEC, DISCARD, WATCH, UNWATCH | See [transactions](#transactions) |
+| Scripting | EVAL, EVALSHA, EVAL_RO, EVALSHA_RO, SCRIPT, FCALL, FCALL_RO, FUNCTION | SCRIPT supports LOAD, EXISTS, FLUSH and KILL; FUNCTION supports LOAD, DELETE, FLUSH, LIST, STATS, DUMP, RESTORE and KILL. See [scripts and functions](#scripts-and-functions) |
 | Connection | PING, ECHO, QUIT, AUTH, SELECT, HELLO, CLIENT | CLIENT supports ID, GETNAME, SETNAME, SETINFO, TRACKING, TRACKINGINFO, GETREDIR and CACHING |
 | Access control | ACL SETUSER, ACL GETUSER, ACL DELUSER, ACL LIST, ACL USERS, ACL WHOAMI, ACL CAT, ACL LOG | See [access control](#access-control) |
-| Server | INFO, FLUSHDB, FLUSHALL, SAVE, BGREWRITEAOF, COMMAND, CONFIG | See [server commands](#server-commands) |
+| Server | INFO, TIME, FLUSHDB, FLUSHALL, SAVE, BGREWRITEAOF, COMMAND, CONFIG | See [server commands](#server-commands) |
 | Cluster | RAFT MEMBERS, RAFT ADDLEARNER, RAFT PROMOTE, RAFT REMOVE, RAFT TRANSFER | CasketDB's own commands, see [cluster administration](#cluster-administration) |
 
 ## Differences from Redis
 
 ### Data types
 
-Strings, including the bitmap and HyperLogLog commands, hashes, sets, lists, sorted sets, including the geo commands, and streams, plus pub/sub. Lua and Functions are not implemented.
+Strings, including the bitmap and HyperLogLog commands, hashes, sets, lists, sorted sets, including the geo commands, and streams, plus pub/sub and Lua scripts and functions.
 
 - `OBJECT ENCODING` tells how CasketDB stores a value. For a string it answers `int`, `embstr` or `raw` from the value, as Redis does after SET; Redis also keeps `raw` after APPEND, SETRANGE, SETBIT, BITOP or BITFIELD, and answers `embstr` for the result of INCRBYFLOAT. For a collection it follows the thresholds below, which differ from Redis for hashes and lists.
 - RENAME, RENAMENX and COPY of a collection stored one element per record rewrite every element, so they take time in proportion to its size, where Redis moves or duplicates the value in memory.
@@ -139,7 +140,27 @@ Outside MULTI, KEYS, SCAN and DBSIZE lock one shard at a time. The result is not
 - A queued command with an unknown name or a wrong argument count aborts EXEC with `EXECABORT`, as in Redis.
 - WATCH compares the position of a key's last write, and for a missing key a counter of the keys created and deleted in its shard, one of 1,024. Expiry of a watched key counts as a change, and so does a key created and deleted again between WATCH and EXEC.
 - WATCH can fire spuriously after a background merge moves a watched key, and, while a watched key is missing, when another key of its shard is created or deleted.
-- Connection and server commands (SELECT, INFO, CONFIG, FLUSHDB and others) are rejected inside MULTI with `ERR Command not allowed inside a transaction`.
+- Connection and server commands (SELECT, INFO, CONFIG, FLUSHDB, SCRIPT, FUNCTION and others) are rejected inside MULTI with `ERR Command not allowed inside a transaction`. EVAL, EVALSHA and FCALL can be queued.
+
+### Scripts and functions
+
+Scripts run on [github.com/acneism/lua](https://github.com/acneism/lua), a Lua 5.1 interpreter in Go that follows Redis 7.2: the same sandbox and libraries (`cjson`, `cmsgpack`, `struct`, `bit`), and the same replies and error texts, with the script's SHA and line.
+
+- A script runs as one transaction and writes its changes as one atomic batch, as EXEC does. In a cluster the leader replicates the changes, not the script. Writes made before an error in the script stay, as in Redis.
+- The transaction locks the shards of the keys the script declares with `numkeys`. The first command on a key of another shard, or KEYS, SCAN or DBSIZE, stops the script before anything is written. The script then runs again from the start with every shard locked, and every other command waits for it. Declare every key a script touches to keep it parallel with other clients.
+- PUBLISH and SPUBLISH from a script reach subscribers after the script's changes are committed. Their reply counts this node's subscribers at the time of the call.
+- EVAL_RO, EVALSHA_RO and FCALL_RO run on followers. EVAL, EVALSHA and FCALL answer `READONLY` there, even for a script without writes.
+- FUNCTION LOAD, DELETE, FLUSH and RESTORE store the libraries in `SYSTEM` with the users. They survive restarts and FLUSHDB. In a cluster they run on the leader, a follower answers `READONLY`, and every node applies them in log order.
+- The cache of EVAL and SCRIPT LOAD belongs to each node and is empty after a restart, as in Redis. Clients that fall back to EVAL on `NOSCRIPT` handle that.
+- SCRIPT KILL and FUNCTION KILL stop a script that has not written yet; one that has written runs to the end (`UNKILLABLE`).
+
+Differences from Redis:
+
+- INFO, FLUSHDB and FLUSHALL answer `This Redis command is not allowed from script` inside a script. So do the commands Redis forbids there, such as CONFIG and CLIENT.
+- Other clients do not get `BUSY` while a long script runs: they wait for the keys it locked, or for all of them.
+- Variables that a function library keeps between calls live in one of several Lua states, not in one shared state.
+- `math.sin`, `math.cos`, `math.tan`, `math.asin`, `math.acos`, `math.atan` and `math.atan2` can differ from Redis in the last bit: the exact versions from lua-libm are LGPL and not linked.
+- `redis.REDIS_VERSION` is `7.2.0`, the version CasketDB reports everywhere.
 
 ### Connection
 
@@ -164,7 +185,7 @@ Users work as in Redis 6 and later. `default` always exists; `CONFIG SET require
 
 Users are kept in the file `SYSTEM` in the data directory and survive restarts; once it exists, `-requirepass` is ignored at start, with a warning. In a cluster a change to users is a Raft entry: run it on the leader, a follower answers `READONLY`, and every node applies it and includes it in snapshots. FLUSHDB does not touch users.
 
-`ACL SETUSER` understands `on`, `off`, `>password`, `<password`, `#hash`, `!hash`, `nopass`, `resetpass`, `~pattern`, `allkeys`, `resetkeys`, `+command`, `-command`, `+@category`, `-@category`, `allcommands`, `nocommands` and `reset`. A new user starts `off`, without passwords, keys or commands. The categories are `keyspace`, `read`, `write`, `string`, `bitmap`, `hash`, `set`, `list`, `sortedset`, `blocking`, `hyperloglog`, `geo`, `stream`, `pubsub`, `fast`, `slow`, `admin`, `dangerous`, `connection` and `transaction`, assigned as in Redis; `RAFT` is `@admin` and `@dangerous`. A denied command answers `NOPERM`, and inside MULTI it aborts EXEC. `ACL LOG [count|RESET]` lists the latest denials of commands, keys and logins on this node, newest first, up to 128; a repeat within a minute adds to the count of its entry.
+`ACL SETUSER` understands `on`, `off`, `>password`, `<password`, `#hash`, `!hash`, `nopass`, `resetpass`, `~pattern`, `allkeys`, `resetkeys`, `+command`, `-command`, `+@category`, `-@category`, `allcommands`, `nocommands` and `reset`. A new user starts `off`, without passwords, keys or commands. The categories are `keyspace`, `read`, `write`, `string`, `bitmap`, `hash`, `set`, `list`, `sortedset`, `blocking`, `hyperloglog`, `geo`, `stream`, `pubsub`, `scripting`, `fast`, `slow`, `admin`, `dangerous`, `connection` and `transaction`, assigned as in Redis; `RAFT` is `@admin` and `@dangerous`. A denied command answers `NOPERM`, and inside MULTI it aborts EXEC. Inside a script it fails with `ERR ACL failure in script`, and `ACL LOG` records it with the context `lua`, as in Redis. `ACL LOG [count|RESET]` lists the latest denials of commands, keys and logins on this node, newest first, up to 128; a repeat within a minute adds to the count of its entry.
 
 Differences from Redis:
 
@@ -182,6 +203,7 @@ Differences from Redis:
 - `CONFIG SET` changes `requirepass`, `appendfsync` and `proto-max-bulk-len`, several at once and all or none. `requirepass` is the password of the `default` user: it is stored and, in a cluster, replicated like other changes to users. `appendfsync` and `proto-max-bulk-len` change only the node it runs on, as in Redis, until restart; there is no config file for `CONFIG REWRITE` to write, so keep them in [flags or `CASKETDB_` variables](configuration.md). A new password does not log out open connections, and a new `proto-max-bulk-len` applies to new connections.
 - `COMMAND` returns an empty list and `COMMAND COUNT` the number of commands. Both exist so that `redis-cli` and `redis-benchmark` start.
 - `FLUSHDB` and `FLUSHALL` do the same thing.
+- `TIME` answers the node's own clock.
 
 ### Expiry
 

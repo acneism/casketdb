@@ -792,6 +792,8 @@ func (tx *Tx) Version(key string) Version {
 	return Version{exists: true, fileID: e.fileID, offset: e.offset}
 }
 
+func (tx *Tx) Err() error { return tx.err }
+
 func (tx *Tx) global() bool {
 	if tx.all || tx.shardwise {
 		return true

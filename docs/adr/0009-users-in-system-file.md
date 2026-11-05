@@ -1,6 +1,6 @@
 # 9. Users in a replicated SYSTEM file
 
-Status: accepted, 2026-10-01. Moves `requirepass` out of [ADR 8](0008-configuration.md).
+Status: accepted, 2026-10-01. Moves `requirepass` out of [ADR 8](0008-configuration.md). [ADR 13](0013-lua-scripting.md) stores function libraries in the same file.
 
 ## Context
 

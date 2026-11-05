@@ -110,6 +110,10 @@ func (w *Writer) Verbatim(s string) {
 	w.BulkString(s)
 }
 
+func (w *Writer) Raw(b []byte) {
+	w.bw.Write(b)
+}
+
 func (w *Writer) Flush() error {
 	return w.bw.Flush()
 }

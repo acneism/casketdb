@@ -1,3 +1,5 @@
+github.com/acneism/lua v0.1.1-0.20261105161551-4efd6e034c2d h1:FmU7VYVEx+fCBwiAIW7qcTjioBmdSpIz87YMrXGDrAI=
+github.com/acneism/lua v0.1.1-0.20261105161551-4efd6e034c2d/go.mod h1:aI4hU9Bkrc5E8GMKnP21aHlmKLgp80VGEtSyY8gkRFw=
 github.com/acneism/raft v0.3.11 h1:wR9D9acAhQNmAROPQwQ2dS+Zmwp70+q+I71v8BIvXgA=
 github.com/acneism/raft v0.3.11/go.mod h1:PieWV8eV9O0twa2T3BrN013D3yvKF1lySQMVRKY+qp0=
 github.com/anishathalye/porcupine v1.3.1 h1:fBZ4/NGNPnIDdd6xNtrNk9/GiEQ0L4FO5+scINN+t0E=

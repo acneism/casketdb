@@ -7,7 +7,6 @@ CasketDB is early software. This page lists what it does not do yet, and how eac
 These are deliberate choices, not missing features:
 
 - sharding data across nodes, as Redis Cluster does;
-- Lua scripting;
 - databases other than `db 0`.
 
 ## Known limitations
@@ -27,6 +26,9 @@ These are deliberate choices, not missing features:
 | Merge checks every record's liveness with a separate shard lock | Batches grouped by shard |
 | WATCH fires spuriously after a merge moves a watched key, and while a watched key is missing, when another key of its shard is created or deleted | A version per key, at 8 more bytes of memory per key |
 | FLUSHDB, CONFIG, INFO, SELECT and similar commands are rejected inside MULTI | Run them after the transaction commits |
+| A script that touches a key it did not declare runs again with every shard locked, and stops all other commands until it ends | Lock the shards of such keys as the script reaches them, when the lock order allows it |
+| Clients get no `BUSY` reply while a long script runs; they wait | Answer `BUSY` to commands that wait for a script longer than a threshold |
+| INFO, FLUSHDB and FLUSHALL cannot be called from a script | Run them without the shard locks the script holds |
 | Expiry depends on the system clock | Detect a backward clock jump at start |
 | No online backup | A backup command built on the hard-link snapshots |
 | A node keeps its latest snapshot, which holds hard links, so disk space of files deleted by merge is freed only when a newer snapshot replaces it | Drop a snapshot once no follower needs it, which the Raft library does not do yet |

@@ -16,5 +16,6 @@ Each record explains one decision that shapes CasketDB: the context, what was de
 | [10](0010-value-types.md) | Value types in records, collections as one value first | 2026-10-02 |
 | [11](0011-collection-members.md) | Members of large collections as records, tied by a generation | 2026-10-02 |
 | [12](0012-ordered-members.md) | An ordered index of members in the engine | 2026-10-03 |
+| [13](0013-lua-scripting.md) | Lua scripting through github.com/acneism/lua | 2026-11-05 |
 
 A new record gets the next number and the sections Context, Decision and Consequences. A record is not edited when the decision changes: a new record replaces it, and the old one says so on its status line.

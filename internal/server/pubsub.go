@@ -215,6 +215,21 @@ func (ps *subscriptions) publish(channel, message []byte, shard bool) int {
 	return n
 }
 
+func (ps *subscriptions) receivers(channel []byte, shard bool) int {
+	ps.mu.RLock()
+	defer ps.mu.RUnlock()
+	if shard {
+		return len(ps.sets[subShard][string(channel)])
+	}
+	n := len(ps.sets[subChannel][string(channel)])
+	for pattern, clients := range ps.sets[subPattern] {
+		if matchGlob(pattern, string(channel)) {
+			n += len(clients)
+		}
+	}
+	return n
+}
+
 func pushTo(clients map[*client]struct{}, msg []byte) int {
 	var resp3 []byte
 	for c := range clients {

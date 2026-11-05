@@ -13,11 +13,13 @@ import (
 	"github.com/acneism/casketdb/internal/bitcask"
 	"github.com/acneism/casketdb/internal/replica"
 	"github.com/acneism/casketdb/internal/resp"
+	"github.com/acneism/lua/redis"
 )
 
 const (
-	Version      = "0.15.0"
-	redisVersion = "7.2.0"
+	Version         = "0.15.0"
+	redisVersion    = "7.2.0"
+	redisVersionNum = 0x070200
 )
 
 var ErrServerClosed = errors.New("server: closed")
@@ -67,6 +69,7 @@ type Server struct {
 	throttle authThrottle
 	maxBulk  atomic.Int64
 	latency  histogram
+	lua      *redis.Engine
 }
 
 type client struct {
@@ -107,6 +110,7 @@ func New(db *bitcask.DB, cfg Config) *Server {
 		byID:      make(map[int64]*client),
 		done:      make(chan struct{}),
 		throttle:  authThrottle{hosts: make(map[string]failures)},
+		lua:       redis.NewEngine(redis.Config{Version: redisVersion, VersionNum: redisVersionNum}),
 	}
 	s.pass.Store(&cfg.RequirePass)
 	s.users = newUsers(cfg.RequirePass)
@@ -120,7 +124,7 @@ func New(db *bitcask.DB, cfg Config) *Server {
 		cfg.Replica.WatchLeadership(s.blocked.wakeAll)
 		cfg.Replica.WatchPublish(s.subs.publish)
 	}
-	if db.System() != nil && cfg.RequirePass != "" {
+	if storedUsers(db.System()) && cfg.RequirePass != "" {
 		logger.Warn("-requirepass is ignored: users are stored in the database; change the password with CONFIG SET requirepass or ACL SETUSER default")
 	}
 	s.maxBulk.Store(int64(cfg.MaxBulkLen))
@@ -311,7 +315,7 @@ func (s *Server) batchable(c *client, args [][]byte) (command, bool) {
 	if !ok || cmd.kind != kindWrite || cmd.global || cmd.blocks || !cmd.validArity(len(args)) {
 		return command{}, false
 	}
-	return cmd, true
+	return s.bind(c, cmd), true
 }
 
 func (s *Server) runBatch(c *client, batch []queued) {
@@ -329,7 +333,7 @@ func (s *Server) runBatch(c *client, batch []queued) {
 	for _, q := range batch {
 		n := len(keys)
 		keys = q.cmd.keys.extract(q.args, keys)
-		single = single && len(keys)-n <= 1
+		single = single && len(keys)-n <= 1 && q.cmd.script == nil
 	}
 	scope := bitcask.Keys(keys...)
 	if single {
@@ -363,6 +367,7 @@ func (s *Server) recoverCommand(c *client, name []byte) {
 func (s *Server) execute(c *client, args [][]byte) {
 	defer s.recoverCommand(c, args[0])
 	cmd, ok := lookup(args[0])
+	cmd = s.bind(c, cmd)
 	switch {
 	case !ok:
 		c.reject(errorReply(unknownCommand(args)))
@@ -377,7 +382,7 @@ func (s *Server) execute(c *client, args [][]byte) {
 		c.quit = true
 		return
 	case c.user != nil && !cmd.noAuth:
-		if msg := s.permission(c, cmd, args); msg != "" {
+		if msg := s.permission(c, cmd, args, aclContext(c)); msg != "" {
 			c.reject(errorReply(msg))
 			return
 		}
@@ -475,14 +480,23 @@ func (s *Server) view(scope bitcask.Scope, fn func(tx *bitcask.Tx) error) error 
 			return err
 		}
 	}
-	return s.db.View(scope, fn)
+	err := s.db.View(scope, fn)
+	if errors.Is(err, bitcask.ErrNotLocked) {
+		err = s.db.View(bitcask.All(), fn)
+	}
+	return err
 }
 
 func (s *Server) update(scope bitcask.Scope, fn func(tx *bitcask.Tx) error) error {
+	commit := s.db.Update
 	if s.cfg.Replica != nil {
-		return s.cfg.Replica.Update(scope, fn)
+		commit = s.cfg.Replica.Update
 	}
-	return s.db.Update(scope, fn)
+	err := commit(scope, fn)
+	if errors.Is(err, bitcask.ErrNotLocked) {
+		err = commit(bitcask.All(), fn)
+	}
+	return err
 }
 
 func (s *Server) flush() error {

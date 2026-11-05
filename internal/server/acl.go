@@ -43,16 +43,17 @@ const (
 	catGeo
 	catStream
 	catPubSub
+	catScripting
 )
 
-var categoryNames = []string{"keyspace", "read", "write", "string", "fast", "slow", "admin", "dangerous", "connection", "transaction", "bitmap", "hash", "set", "list", "sortedset", "blocking", "hyperloglog", "geo", "stream", "pubsub"}
+var categoryNames = []string{"keyspace", "read", "write", "string", "fast", "slow", "admin", "dangerous", "connection", "transaction", "bitmap", "hash", "set", "list", "sortedset", "blocking", "hyperloglog", "geo", "stream", "pubsub", "scripting"}
 
 func (cmd command) categories() category {
 	c := cmd.acl
-	switch cmd.kind {
-	case kindRead:
+	switch {
+	case cmd.script == nil && cmd.kind == kindRead:
 		c |= catRead
-	case kindWrite:
+	case cmd.script == nil && cmd.kind == kindWrite:
 		c |= catWrite
 	}
 	if c&catFast == 0 {
@@ -249,7 +250,13 @@ type users struct {
 }
 
 type systemState struct {
-	Users map[string][]string `json:"users"`
+	Users     map[string][]string `json:"users,omitempty"`
+	Functions []byte              `json:"functions,omitempty"`
+}
+
+func storedUsers(b []byte) bool {
+	var st systemState
+	return json.Unmarshal(b, &st) == nil && st.Users != nil
 }
 
 func (us *users) clone() *users {
@@ -264,19 +271,23 @@ func (us *users) clone() *users {
 	return c
 }
 
-func (us *users) encode() ([]byte, error) {
-	st := systemState{Users: map[string][]string{}}
+func (us *users) rules() map[string][]string {
+	rules := map[string][]string{}
 	us.mu.RLock()
 	for name, u := range us.byName {
-		st.Users[name] = u.perms.Load().rules()
+		rules[name] = u.perms.Load().rules()
 	}
 	us.mu.RUnlock()
-	return json.Marshal(st)
+	return rules
+}
+
+func (us *users) encode() ([]byte, error) {
+	return json.Marshal(systemState{Users: us.rules()})
 }
 
 func (us *users) load(b []byte) error {
 	var st systemState
-	if err := json.Unmarshal(b, &st); err != nil {
+	if err := json.Unmarshal(b, &st); err != nil || st.Users == nil {
 		return err
 	}
 	parsed := make(map[string]*perms, len(st.Users))
@@ -382,7 +393,7 @@ func (s *Server) login(c *client, name string, pass []byte) (*user, reply) {
 	case !allowed:
 		return nil, errorReply(errAuthLimit)
 	case u == nil:
-		s.aclLog.add("auth", "AUTH", name, c)
+		s.aclLog.add("auth", "AUTH", name, aclContext(c), c)
 		s.audit(c, slog.LevelWarn, "AUTH failed", name[:min(len(name), 64)])
 		return nil, errorReply(errWrongPass)
 	}
@@ -468,23 +479,30 @@ func (us *users) delete(names []string) (int, bool) {
 	return deleted, true
 }
 
-func (s *Server) permission(c *client, cmd command, args [][]byte) string {
+func (s *Server) permission(c *client, cmd command, args [][]byte, context string) string {
 	p := c.user.perms.Load()
 	switch {
 	case p.all:
 		return ""
 	case !p.commands[cmd.id] && !openToEveryone(cmd, args):
-		s.aclLog.add("command", cmd.name, c.user.name, c)
+		s.aclLog.add("command", cmd.name, c.user.name, context, c)
 		return "NOPERM User " + c.user.name + " has no permissions to run the '" + cmd.name + "' command"
 	}
 	var kb [8]string
 	for _, key := range cmd.keys.extract(args, kb[:0]) {
 		if !p.keyAllowed(key) {
-			s.aclLog.add("key", key, c.user.name, c)
+			s.aclLog.add("key", key, c.user.name, context, c)
 			return "NOPERM No permissions to access a key"
 		}
 	}
 	return ""
+}
+
+func aclContext(c *client) string {
+	if c.multi {
+		return "multi"
+	}
+	return "toplevel"
 }
 
 const aclLogMax = 128
@@ -502,12 +520,8 @@ type aclLog struct {
 	nextID  int64
 }
 
-func (l *aclLog) add(reason, object, username string, c *client) {
+func (l *aclLog) add(reason, object, username, context string, c *client) {
 	now := time.Now()
-	context := "toplevel"
-	if c.multi {
-		context = "multi"
-	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	for i, d := range l.entries {
@@ -563,27 +577,42 @@ func (s *Server) changeUsers(change func(*users) string) reply {
 	if msg := change(next); msg != "" {
 		return errorReply(msg)
 	}
-	b, err := next.encode()
-	if err == nil {
-		if rep := s.cfg.Replica; rep != nil {
-			err = rep.SetSystem(b)
-		} else {
-			err = s.db.SetSystem(b)
-		}
-	}
-	if err != nil {
+	if err := s.saveSystem(func(st *systemState) { st.Users = next.rules() }); err != nil {
 		return storageError(err)
 	}
 	return okReply
 }
 
+func (s *Server) saveSystem(change func(*systemState)) error {
+	var st systemState
+	if b := s.db.System(); len(b) > 0 {
+		if err := json.Unmarshal(b, &st); err != nil {
+			return err
+		}
+	}
+	change(&st)
+	b, err := json.Marshal(st)
+	if err != nil {
+		return err
+	}
+	if rep := s.cfg.Replica; rep != nil {
+		return rep.SetSystem(b)
+	}
+	return s.db.SetSystem(b)
+}
+
 func (s *Server) loadSystem(b []byte) {
-	if len(b) == 0 {
-		return
+	var st systemState
+	if len(b) > 0 {
+		if err := json.Unmarshal(b, &st); err != nil {
+			s.log.Error("stored system state not loaded", "err", err)
+			return
+		}
+		if err := s.users.load(b); err != nil {
+			s.log.Error("stored users not loaded, keeping the current ones", "err", err)
+		}
 	}
-	if err := s.users.load(b); err != nil {
-		s.log.Error("stored users not loaded, keeping the current ones", "err", err)
-	}
+	s.loadFunctions(st.Functions)
 }
 
 func openToEveryone(cmd command, args [][]byte) bool {

@@ -100,6 +100,7 @@ type command struct {
 	acl     category
 	tx      txFunc
 	conn    connFunc
+	script  scriptFunc
 	inMulti bool
 	noAuth  bool
 	blocks  bool
@@ -128,7 +129,7 @@ var commands map[string]command
 
 func init() {
 	commands = map[string]command{}
-	for _, table := range []map[string]command{serverCommands, keyCommands, stringCommands, bitCommands, hashCommands, setCommands, listCommands, zsetCommands, blockingCommands, hyperLogLogCommands, geoCommands, streamCommands, streamGroupCommands, pubsubCommands, transactionCommands, raftCommands, aclCommands} {
+	for _, table := range []map[string]command{serverCommands, keyCommands, stringCommands, bitCommands, hashCommands, setCommands, listCommands, zsetCommands, blockingCommands, hyperLogLogCommands, geoCommands, streamCommands, streamGroupCommands, pubsubCommands, transactionCommands, raftCommands, aclCommands, scriptingCommands} {
 		maps.Copy(commands, table)
 	}
 	for id, name := range slices.Sorted(maps.Keys(commands)) {
@@ -153,6 +154,12 @@ var serverCommands = map[string]command{
 	"flushall":     {arity: -1, kind: kindConn, acl: catKeyspace | catWrite | catDangerous, conn: cmdFlush},
 	"save":         {arity: 1, kind: kindConn, acl: catAdmin | catDangerous, conn: cmdSave},
 	"bgrewriteaof": {arity: 1, kind: kindConn, acl: catAdmin | catDangerous, conn: cmdBgRewriteAOF},
+	"time":         {arity: 1, kind: kindPure, acl: catFast, tx: cmdTime},
+}
+
+func cmdTime(_ *bitcask.Tx, _ [][]byte) (reply, error) {
+	now := time.Now()
+	return stringsReply{strconv.FormatInt(now.Unix(), 10), strconv.Itoa(now.Nanosecond() / 1000)}, nil
 }
 
 func upper(b []byte) string {

@@ -23,7 +23,7 @@ This page lists what CasketDB protects, from whom, and what it leaves to the dep
 - **Root and the account CasketDB runs as, on every node.** They can read memory and files, change flags and replace the binary.
 - **Administrators:** users allowed to run `acl`, `config`, `raft`, `flushdb` or `+@all`. Audit records name them, but nothing limits them.
 - **Nodes holding a certificate from the cluster CA.** They are trusted to follow the Raft protocol.
-- **The Go standard library and github.com/acneism/raft,** the only code the server runs besides its own.
+- **The Go standard library, github.com/acneism/raft and github.com/acneism/lua,** the only code the server runs besides its own.
 
 ## Threats
 
@@ -34,15 +34,15 @@ This page lists what CasketDB protects, from whom, and what it leaves to the dep
 | | Guesses a password | 10 failed AUTH attempts per second per address, an IPv6 /64 counting as one; `AUTH failed` audit records | Many addresses together guess faster: use long random passwords |
 | | Exhausts memory or connections before authenticating | 10 arguments of up to 16 KB per command until AUTH, `-maxclients`, `-timeout` | `-timeout` is off by default; there is no limit per address |
 | A client with a limited user | Runs commands or touches keys beyond its rights | [ACL](commands.md#access-control) by command, category and key pattern; `NOPERM`; `ACL LOG` | No read-only or write-only key patterns, no rules for single subcommands |
-| | Overloads the server | `-proto-max-bulk-len`; KEYS and SCAN lock one shard at a time | No limits per user; `KEYS *` on a large database builds a large reply, so keep `@dangerous` away from applications |
-| Anyone with an administrator's password | Reads or deletes all data, changes users and the cluster | Audit records with the user and the client's address | Everything an administrator may do. Paths, addresses and TLS files cannot change at runtime, and there is no Lua, `MODULE` or `DEBUG`, so the password does not lead to writing files or running code on the host |
+| | Overloads the server | `-proto-max-bulk-len`; KEYS and SCAN lock one shard at a time; SCRIPT KILL and FUNCTION KILL | No limits per user; `KEYS *` on a large database builds a large reply, so keep `@dangerous` away from applications. A script can loop or allocate memory without limit, as in Redis, and one that touches undeclared keys holds every shard while it runs; SCRIPT KILL works only before its first write. Keep `@scripting` away from users that should not run code |
+| Anyone with an administrator's password | Reads or deletes all data, changes users and the cluster | Audit records with the user and the client's address | Everything an administrator may do. Paths, addresses and TLS files cannot change at runtime, Lua scripts run in the Redis sandbox without `io`, `os`, `require`, `dofile` or `loadfile`, and there is no `MODULE` or `DEBUG`, so the password does not lead to writing files or running code on the host |
 | Anyone who reaches a Raft port | Poses as a member: reads replicated data, disturbs elections, appends entries | [Mutual TLS](replication.md#mutual-tls-between-nodes): a node must present a certificate for its own id; a warning when Raft runs without TLS on a non-loopback address | Without mutual TLS, all of this is possible. Firewall Raft ports from clients either way |
 | A local user of a node | Reads the data files | Directories `0700`, files `0600`, a warning when `-dir` or the Raft directory is open to others | On Windows, the ACLs inherited from the parent directory decide |
 | | Reads the password from the process list | `CASKETDB_REQUIREPASS` instead of `-requirepass` | |
 | Anyone who reaches `/metrics` | Learns about the database | Counts and sizes only, no keys or values | No authentication: bind it to loopback or a private address |
 | Anyone who gets the disks, backups or copies of the files | Reads keys, values and password hashes | None inside CasketDB; see [encryption at rest](../SECURITY.md#encryption-at-rest) | Hashes are unsalted SHA-256: a short password falls to offline guessing |
 | Malformed input from the network | Crashes the server or blows up its memory | The RESP parser, the decoders of data files, Raft entries and snapshots, and the ACL rules are fuzzed in CI and nightly; a command that panics closes only its own connection | |
-| A vulnerable dependency | Exploits a bug outside CasketDB's code | The standard library only, except Raft; `govulncheck` in CI and nightly | |
+| A vulnerable dependency | Exploits a bug outside CasketDB's code | The standard library only, except the Raft library and the Lua interpreter, which themselves use only the standard library; `govulncheck` in CI and nightly | |
 
 ## Out of scope
 
