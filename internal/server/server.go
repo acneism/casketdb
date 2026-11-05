@@ -110,7 +110,7 @@ func New(db *bitcask.DB, cfg Config) *Server {
 		byID:      make(map[int64]*client),
 		done:      make(chan struct{}),
 		throttle:  authThrottle{hosts: make(map[string]failures)},
-		lua:       redis.NewEngine(redis.Config{Version: redisVersion, VersionNum: redisVersionNum}),
+		lua:       redis.NewEngine(redis.Config{Version: redisVersion, VersionNum: redisVersionNum, Math: &exactMath}),
 	}
 	s.pass.Store(&cfg.RequirePass)
 	s.users = newUsers(cfg.RequirePass)

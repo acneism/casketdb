@@ -8,10 +8,14 @@ import (
 
 	"github.com/acneism/casketdb/internal/bitcask"
 	"github.com/acneism/casketdb/internal/resp"
+	"github.com/acneism/lua"
+	libm "github.com/acneism/lua-libm"
 	"github.com/acneism/lua/redis"
 )
 
 type scriptFunc func(s *Server, c *client, tx *bitcask.Tx, args [][]byte) (reply, error)
+
+var exactMath = lua.Math{Sin: libm.Sin, Cos: libm.Cos, Tan: libm.Tan, Asin: libm.Asin, Acos: libm.Acos, Atan: libm.Atan, Atan2: libm.Atan2}
 
 var scriptKeys = keySpec{numkeys: 2}
 

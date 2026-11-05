@@ -442,6 +442,8 @@ var diffCommands = []func(g *diffGen) []string{
 			"return 3.99",
 			"return redis.sha1hex(ARGV[1])",
 			"return cjson.encode({a = ARGV[1]})",
+			"local x = tonumber(ARGV[1]) or 1.85 return string.format('%.17g %.17g %.17g %.17g', math.sin(x), math.cos(x), math.tan(x), math.atan2(x, 3))",
+			"local x = (tonumber(ARGV[1]) or 7) / 9 return string.format('%.17g %.17g %.17g', math.asin(x), math.acos(x), math.atan(x))",
 		)
 		return cmd(g.pick("EVAL", "EVAL", "EVAL", "EVAL_RO"), one(script, "1", g.key("s"), g.value()))
 	},

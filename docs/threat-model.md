@@ -23,7 +23,7 @@ This page lists what CasketDB protects, from whom, and what it leaves to the dep
 - **Root and the account CasketDB runs as, on every node.** They can read memory and files, change flags and replace the binary.
 - **Administrators:** users allowed to run `acl`, `config`, `raft`, `flushdb` or `+@all`. Audit records name them, but nothing limits them.
 - **Nodes holding a certificate from the cluster CA.** They are trusted to follow the Raft protocol.
-- **The Go standard library, github.com/acneism/raft and github.com/acneism/lua,** the only code the server runs besides its own.
+- **The Go standard library, github.com/acneism/raft, github.com/acneism/lua and github.com/acneism/lua-libm,** the only code the server runs besides its own.
 
 ## Threats
 
@@ -42,7 +42,7 @@ This page lists what CasketDB protects, from whom, and what it leaves to the dep
 | Anyone who reaches `/metrics` | Learns about the database | Counts and sizes only, no keys or values | No authentication: bind it to loopback or a private address |
 | Anyone who gets the disks, backups or copies of the files | Reads keys, values and password hashes | None inside CasketDB; see [encryption at rest](../SECURITY.md#encryption-at-rest) | Hashes are unsalted SHA-256: a short password falls to offline guessing |
 | Malformed input from the network | Crashes the server or blows up its memory | The RESP parser, the decoders of data files, Raft entries and snapshots, and the ACL rules are fuzzed in CI and nightly; a command that panics closes only its own connection | |
-| A vulnerable dependency | Exploits a bug outside CasketDB's code | The standard library only, except the Raft library and the Lua interpreter, which themselves use only the standard library; `govulncheck` in CI and nightly | |
+| A vulnerable dependency | Exploits a bug outside CasketDB's code | The standard library only, except the Raft library, the Lua interpreter and its trigonometry, which themselves use only the standard library; `govulncheck` in CI and nightly | |
 
 ## Out of scope
 

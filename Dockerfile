@@ -16,10 +16,19 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags="-s -w" -o /out/casketdb ./cmd/casketdb \
     && mkdir -m 700 -p /out/data
 
+# The licenses and notices of CasketDB and of the modules in the binary travel
+# with it; lua-libm is LGPL-2.1-or-later and requires its license text.
+RUN mkdir -p /out/licenses/casketdb && cp LICENSE NOTICE /out/licenses/casketdb/ \
+    && for m in github.com/acneism/lua github.com/acneism/lua-libm github.com/acneism/raft; do \
+         d=$(go list -m -f '{{.Dir}}' "$m") && mkdir -p "/out/licenses/$m" \
+         && find "$d" -maxdepth 1 \( -name 'LICENSE*' -o -name 'NOTICE*' \) -exec cp -r {} "/out/licenses/$m/" \; ; \
+       done
+
 # Distroless: the binary, its certificates and a non-root user, nothing else.
 FROM gcr.io/distroless/static-debian13:nonroot
 
 COPY --from=build /out/casketdb /usr/local/bin/casketdb
+COPY --from=build /out/licenses /licenses
 
 # The volume inherits the permissions of /data, so it must belong to the
 # non-root user (65532) and be closed to others (700) before the volume is

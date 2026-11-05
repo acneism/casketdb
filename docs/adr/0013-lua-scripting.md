@@ -15,11 +15,12 @@ Job queues, locks and rate limiters for Redis (BullMQ, Sidekiq, redlock and many
 - INFO, FLUSHDB and FLUSHALL take shard locks or the flush lock themselves, so a script may not call them.
 - FUNCTION LOAD, DELETE, FLUSH and RESTORE store the output of FUNCTION DUMP in `SYSTEM` next to the users. Every node, the leader included, replaces its libraries from that payload with FUNCTION RESTORE FLUSH, which swaps them at once. A change that cannot be stored, as on a follower, puts the libraries back from `SYSTEM`.
 - The script cache of EVAL and SCRIPT LOAD stays on each node and is lost at restart, as in Redis.
+- The engine takes the seven trigonometric functions from github.com/acneism/lua-libm, so that scripts compute them as Redis on x86-64 does, to the last bit.
 
 ## Consequences
 
 - A script that declares its keys runs in parallel with other commands. One that touches other keys runs again under a lock of every shard, and the whole server waits for it.
 - Clients get no `BUSY` while a long script runs: they wait for the locks it holds. SCRIPT KILL and FUNCTION KILL need no lock and stop a script before its first write.
-- The server depends on a second library of the same author. Like the Raft library, it uses only the standard library.
-- The bit-exact trigonometry of lua-libm is LGPL and is not linked, so seven `math` functions can differ from Redis in the last bit.
+- The server depends on two more libraries of the same author. Like the Raft library, they use only the standard library.
+- lua-libm is LGPL-2.1-or-later, the rest of CasketDB Apache-2.0. NOTICE says where its source is and how to build CasketDB with a changed copy, and the container image carries its license in `/licenses`.
 - `SYSTEM` can now exist without users. `-requirepass` is ignored only once users are stored in it.

@@ -43,3 +43,19 @@ POSSIBILITY OF SUCH DAMAGE.
 
 MurmurHash64A, used to hash HyperLogLog elements, is by Austin Appleby and
 is in the public domain.
+
+CasketDB runs Lua scripts with these Go modules:
+
+github.com/acneism/lua, licensed under the Apache License, Version 2.0. Its
+NOTICE and LICENSES directory list the code it adapts from Lua 5.1, Redis and
+the Redis Lua libraries, under the MIT and BSD licenses.
+
+github.com/acneism/lua-libm, licensed under the GNU Lesser General Public
+License, version 2.1 or later. It provides the trigonometric functions of Lua
+scripts, translated from the IBM Accurate Mathematical Library in GNU libc 2.39.
+Its source is at https://github.com/acneism/lua-libm. To use a modified version,
+point go.mod at it with a replace directive and rebuild CasketDB from its source
+at https://github.com/acneism/casketdb.
+
+The container image keeps the license and notice files of CasketDB, of these
+modules and of github.com/acneism/raft in /licenses.

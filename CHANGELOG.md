@@ -6,9 +6,10 @@ Versions are listed newest first. CasketDB was called BitKV up to and including 
 
 ### Added
 
-- Lua scripts and functions through [github.com/acneism/lua](https://github.com/acneism/lua): EVAL, EVALSHA, EVAL_RO, EVALSHA_RO, SCRIPT LOAD, EXISTS, FLUSH and KILL, FCALL, FCALL_RO, and FUNCTION LOAD, DELETE, FLUSH, LIST, STATS, DUMP, RESTORE and KILL. A script runs as one transaction on the keys it declares and replicates as its effects. Function libraries are stored in `SYSTEM` and replicated like users. See [scripts and functions](docs/commands.md#scripts-and-functions) and [ADR 13](docs/adr/0013-lua-scripting.md).
+- Lua scripts and functions through [github.com/acneism/lua](https://github.com/acneism/lua): EVAL, EVALSHA, EVAL_RO, EVALSHA_RO, SCRIPT LOAD, EXISTS, FLUSH and KILL, FCALL, FCALL_RO, and FUNCTION LOAD, DELETE, FLUSH, LIST, STATS, DUMP, RESTORE and KILL. A script runs as one transaction on the keys it declares and replicates as its effects. Function libraries are stored in `SYSTEM` and replicated like users. Trigonometric functions come from [github.com/acneism/lua-libm](https://github.com/acneism/lua-libm), LGPL-2.1-or-later, and match Redis to the last bit. See [scripts and functions](docs/commands.md#scripts-and-functions) and [ADR 13](docs/adr/0013-lua-scripting.md).
 - TIME.
 - The ACL category `@scripting`.
+- The container image carries the licenses and notices of CasketDB and of the modules it is built from in `/licenses`.
 - A Dockerfile builds a distroless image with the static binary, running as a non-root user, listening on `0.0.0.0:6379` and keeping data in the volume `/data`. Multi-platform builds cross-compile without emulation. See [quick start](README.md#quick-start).
 - [Benchmarks](docs/benchmarks.md) compare CasketDB with Redis 7.2 and etcd 3.7 on the same machine, with the method and the commands to repeat them.
 

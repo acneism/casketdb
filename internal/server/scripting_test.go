@@ -34,6 +34,7 @@ func TestScripts(t *testing.T) {
 	c.expect(errReply("ERR This Redis command is not allowed from script"), "EVAL", "return redis.call('EVAL', 'return 1', '0')", "0")
 	c.expect(errReply("ERR Unknown Redis command called from script"), "EVAL", "return redis.call('NOSUCH')", "0")
 	c.expect(int64(2), "EVAL", "return #redis.call('TIME')", "0")
+	c.expect("0.96127520297529989", "EVAL", "return string.format('%.17g', math.sin(1.85))", "0")
 	c.expect(ok, "EVAL", "return redis.call('SELECT', 0)", "0")
 	c.expect(errReply("ERR Number of keys can't be greater than number of args"), "EVAL", "return 1", "2", "a")
 }

@@ -35,7 +35,7 @@ Any Redis client — `redis-cli`, `redis-benchmark`, go-redis, redis-py — work
 - **No lost acknowledged writes in a cluster.** With 3 or 5 nodes, a write is acknowledged only after a majority has it in the Raft log. Redis replication is asynchronous; CasketDB's is not.
 - **Familiar durability.** `appendfsync always | everysec | no` with Redis semantics. An acknowledged write survives `kill -9` in every mode and a power loss according to the fsync policy.
 - **Lua scripts and functions.** EVAL, EVALSHA and FCALL run atomically on the same Lua 5.1 as Redis 7.2, through [github.com/acneism/lua](https://github.com/acneism/lua), and replicate as their effects.
-- **Small and dependency-light.** One binary. The external dependencies of the server are the Raft library [github.com/acneism/raft](https://github.com/acneism/raft) and the Lua interpreter [github.com/acneism/lua](https://github.com/acneism/lua); the tests also use [Porcupine](https://github.com/anishathalye/porcupine).
+- **Small and dependency-light.** One binary. The external dependencies of the server are the Raft library [github.com/acneism/raft](https://github.com/acneism/raft), the Lua interpreter [github.com/acneism/lua](https://github.com/acneism/lua) and its trigonometry [github.com/acneism/lua-libm](https://github.com/acneism/lua-libm); the tests also use [Porcupine](https://github.com/anishathalye/porcupine).
 
 ## Quick start
 
@@ -120,4 +120,4 @@ Bug reports and pull requests are welcome. Start with [CONTRIBUTING.md](CONTRIBU
 
 ## License
 
-Apache License 2.0, see [LICENSE](LICENSE). Parts follow algorithms of Redis under its BSD license; see [NOTICE](NOTICE).
+Apache License 2.0, see [LICENSE](LICENSE). Parts follow algorithms of Redis under its BSD license. The trigonometric functions of Lua scripts come from [github.com/acneism/lua-libm](https://github.com/acneism/lua-libm) under the LGPL 2.1 or later. See [NOTICE](NOTICE).

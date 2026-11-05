@@ -144,7 +144,7 @@ Outside MULTI, KEYS, SCAN and DBSIZE lock one shard at a time. The result is not
 
 ### Scripts and functions
 
-Scripts run on [github.com/acneism/lua](https://github.com/acneism/lua), a Lua 5.1 interpreter in Go that follows Redis 7.2: the same sandbox and libraries (`cjson`, `cmsgpack`, `struct`, `bit`), and the same replies and error texts, with the script's SHA and line.
+Scripts run on [github.com/acneism/lua](https://github.com/acneism/lua), a Lua 5.1 interpreter in Go that follows Redis 7.2: the same sandbox and libraries (`cjson`, `cmsgpack`, `struct`, `bit`), and the same replies and error texts, with the script's SHA and line. The trigonometric functions come from [github.com/acneism/lua-libm](https://github.com/acneism/lua-libm) and match Redis on x86-64 to the last bit.
 
 - A script runs as one transaction and writes its changes as one atomic batch, as EXEC does. In a cluster the leader replicates the changes, not the script. Writes made before an error in the script stay, as in Redis.
 - The transaction locks the shards of the keys the script declares with `numkeys`. The first command on a key of another shard, or KEYS, SCAN or DBSIZE, stops the script before anything is written. The script then runs again from the start with every shard locked, and every other command waits for it. Declare every key a script touches to keep it parallel with other clients.
@@ -159,7 +159,6 @@ Differences from Redis:
 - INFO, FLUSHDB and FLUSHALL answer `This Redis command is not allowed from script` inside a script. So do the commands Redis forbids there, such as CONFIG and CLIENT.
 - Other clients do not get `BUSY` while a long script runs: they wait for the keys it locked, or for all of them.
 - Variables that a function library keeps between calls live in one of several Lua states, not in one shared state.
-- `math.sin`, `math.cos`, `math.tan`, `math.asin`, `math.acos`, `math.atan` and `math.atan2` can differ from Redis in the last bit: the exact versions from lua-libm are LGPL and not linked.
 - `redis.REDIS_VERSION` is `7.2.0`, the version CasketDB reports everywhere.
 
 ### Connection
